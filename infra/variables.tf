@@ -1,5 +1,5 @@
 variable "project" {
-  description = "Nombre del proyecto, se usa como prefijo de los recursos"
+  description = "Nombre del proyecto, se usa como prefijo de todos los recursos"
   type        = string
   default     = "malka-suite"
 }
@@ -11,7 +11,7 @@ variable "environment" {
 }
 
 variable "region" {
-  description = "Region de AWS"
+  description = "Region de AWS donde se crea todo"
   type        = string
   default     = "us-east-1"
 }
@@ -23,7 +23,13 @@ variable "vpc_cidr" {
 }
 
 variable "habilitar_endpoints_interfaz" {
-  description = "Crea los VPC endpoints de tipo interfaz para SQS y Bedrock. Cuestan alrededor de 7 USD por mes cada uno, por eso arrancan apagados hasta que exista el worker."
+  description = "Crea los VPC endpoints de tipo interfaz. Tienen costo por hora, por eso estan apagados"
   type        = bool
   default     = false
+}
+
+variable "image_tag" {
+  description = "Etiqueta de la imagen del backend publicada en ECR"
+  type        = string
+  default     = "latest"
 }
