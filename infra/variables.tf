@@ -33,3 +33,10 @@ variable "image_tag" {
   type        = string
   default     = "latest"
 }
+
+# Origenes que pueden llamar a la API desde el navegador.
+variable "origenes_permitidos" {
+  description = "Lista de origenes habilitados para CORS"
+  type        = list(string)
+  default     = ["http://localhost:5173", "http://127.0.0.1:5173"]
+}
