@@ -7,6 +7,15 @@ resource "aws_apigatewayv2_api" "principal" {
   protocol_type = "HTTP"
   description   = "API publica de Malka Suite"
 
+  # API Gateway responde el preflight; no agregar CORSMiddleware en FastAPI.
+  cors_configuration {
+    allow_origins  = var.origenes_permitidos
+    allow_methods  = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    allow_headers  = ["content-type", "authorization"]
+    expose_headers = ["x-request-id"]
+    max_age        = 3600
+  }
+
   tags = {
     Name = "${local.name}-api"
   }
