@@ -13,6 +13,25 @@ Stack: **FastAPI** sobre **AWS Lambda** (imagen de contenedor), expuesta por **A
 
 ---
 
+## De qué va el proyecto
+
+
+Malka Suite es una plataforma SaaS para criaderos de abejas reinas. El caso piloto es la Cabaña Apícola Malka, en la zona rural de La Plata.
+
+La cría de reinas es una producción encadenada y a contrarreloj: cada tanda pasa por el traslarve, las iniciadoras, las continuadoras y el parque de fecundación o el banco de reinas, con fechas que no se pueden correr. Hoy ese ciclo se registra en pizarras y cuadernos, las reservas se comprometen sin saber cuánto va a poder entregar la producción y la facturación se arma a mano.
+
+Malka Suite unifica en un solo sistema:
+
+- **Producción y trazabilidad**: el ciclo de cada tanda etapa por etapa, con porcentajes de aceptación, material consumido y ocupación de los bancos.
+- **Ventas nacionales y de exportación**: pedidos y reservas que se descuentan de la disponibilidad real de la producción.
+- **Agente de facturación con IA**: redacta borradores de facturas, remitos y documentación aduanera que una persona revisa y aprueba antes de emitir.
+
+Es multi-tenant: cada criadero es un inquilino con sus datos aislados. Los usuarios son el dueño o administrador, el capataz de criadores y el equipo de administración y ventas.
+
+> En el Checkpoint 1 el backend tiene la infraestructura base y los endpoints de salud. Los módulos de negocio se construyen sobre esta base (ver [Estado del Checkpoint 1](#estado-del-checkpoint-1)).
+
+---
+
 ## Arquitectura
 
 ![Arquitectura cloud de Malka Suite](docs/arquitectura.jpg)
@@ -22,7 +41,7 @@ flowchart TB
     U["Usuario / navegador"] --> FE["Frontend React + Vite (Vercel)"]
     FE -->|"HTTPS + CORS"| AGW["API Gateway HTTP<br/>w0kwb9belc"]
     AGW --> L
-    subgraph VPC["VPC 10.0.0.0/16 — sin NAT Gateway"]
+    subgraph VPC["VPC 10.20.0.0/16 — sin NAT Gateway"]
         L["Lambda malka-suite-dev-api<br/>FastAPI + Mangum (imagen ECR)"]
         VE1["VPC Endpoint (interface)<br/>Secrets Manager"]
         VE2["VPC Endpoint (gateway)<br/>S3"]
@@ -51,7 +70,7 @@ Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr
 | API Gateway HTTP | `w0kwb9belc` | Entrada pública, ruteo y respuesta del preflight CORS |
 | Lambda | `malka-suite-dev-api` | Ejecuta FastAPI a partir de una imagen de contenedor |
 | ECR | `malka-suite-dev-backend` | Registro de la imagen, con lifecycle policy |
-| VPC | `vpc-0499544bc014ded68` | Aislamiento de red (10.0.0.0/16) |
+| VPC | `vpc-0499544bc014ded68` | Aislamiento de red (10.20.0.0/16) |
 | Subredes privadas | `subnet-0f13096…` (1a), `subnet-0018ca9…` (1b) | Dos AZ, requisito del subnet group de RDS |
 | Security Groups | lambda `sg-051b948…`, rds `sg-0d2447c…`, endpoints `sg-0865159…` | Acceso a la base solo desde el SG de la Lambda |
 | VPC Endpoints | S3 (gateway) `vpce-0b20ead…`, Secrets Manager (interface) `vpce-0b7d2f4…` | Salida a AWS sin NAT |
@@ -65,6 +84,18 @@ Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr
 El proyecto vive dentro del **plan gratuito nuevo de AWS**, con dos consecuencias que condicionaron el diseño: la retención de backups de RDS está limitada a 1 día y no se permite el autoscaling de almacenamiento.
 
 El único costo fijo relevante es el **VPC endpoint de interface de Secrets Manager: ~7,30 USD/mes**. Es el precio de no tener un NAT Gateway, que costaría unas cinco veces más. Lambda, API Gateway, RDS `db.t4g.micro` y ECR se mantienen dentro de los límites gratuitos para el volumen de este TP.
+
+---
+
+## Observabilidad
+
+| Qué | Dónde | Detalle |
+|---|---|---|
+| Logs de la API | CloudWatch `/aws/lambda/malka-suite-dev-api` | Retención de 14 días. El grupo se declara en Terraform; si no, guardaría los logs para siempre |
+| Trazas | AWS X-Ray | Tracing activo en la Lambda |
+| Logs de la base | CloudWatch, exportados desde RDS | Incluye toda consulta que tarde más de 500 ms |
+| Prueba de vida | `GET /health` | Usada por el monitoreo y el smoke test |
+| Límite de tráfico | API Gateway | 20 requests por segundo, ráfagas de hasta 50 |
 
 ---
 
@@ -94,22 +125,78 @@ curl -i -X OPTIONS https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
 
 ---
 
-## Desarrollo local
+## Estructura del proyecto
 
-Requisitos: Python 3.12, Docker, Terraform 1.16+, AWS CLI con el perfil `malka`.
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-# http://127.0.0.1:8000/health
+```
+app/
+└── main.py              # Aplicación FastAPI y handler que invoca Lambda
+infra/
+├── versions.tf          # Versiones de Terraform y providers; estado remoto en S3
+├── main.tf              # Prefijo común de nombres y zonas de disponibilidad
+├── variables.tf         # Variables generales del proyecto
+├── network.tf           # VPC, subredes, security groups y VPC endpoints
+├── rds.tf               # PostgreSQL, credenciales en Secrets Manager y su endpoint
+├── ecr.tf               # Repositorio de imágenes y lifecycle policy
+├── compute.tf           # Lambda, rol IAM y grupo de logs
+├── api.tf               # API Gateway: rutas, CORS y límites de tráfico
+├── outputs.tf           # Valores que se consultan después del apply
+└── backend.hcl.example  # Plantilla del backend de estado
+docs/
+├── adr/                 # Decisiones de arquitectura
+├── arquitectura.jpg     # Diagrama cloud
+└── arquitectura.pdf
+tests/                   # Pruebas automatizadas
+Dockerfile               # Imagen de Lambda con Python 3.12
+requirements.txt         # Dependencias de la API
+AI-DECISIONS.md          # Registro de decisiones asistidas por IA
 ```
 
+
+La API se escribe como una aplicación FastAPI común. Al final de `app/main.py`, Mangum la envuelve en `handler`, que es la función que Lambda invoca en cada request: traduce el evento que manda API Gateway a una request que FastAPI entiende. Por eso el mismo código corre igual en local con Uvicorn y en AWS.
+
+---
+
+## Desarrollo local
+
+Requisitos: Python 3.12, Docker, Terraform 1.10+, AWS CLI con el perfil `malka`.
+
+```bash
+python -m venv .venv
+
+# Linux / macOS
+source .venv/bin/activate
+
+# Git Bash en Windows
+source .venv/Scripts/activate
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt uvicorn
+uvicorn app.main:app --reload
+# http://127.0.0.1:8000/health
+# http://127.0.0.1:8000/docs  (documentación interactiva de FastAPI, solo en local)
+```
+
+Uvicorn no está en `requirements.txt` porque en AWS no se usa: allá la API la ejecuta Lambda a través de Mangum. Dejarlo afuera mantiene la imagen más liviana.
+
 El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No necesita credenciales de AWS**: todo lo que empieza con `VITE_` queda expuesto en el bundle del navegador.
+
+
+### Variables de entorno de la API
+
+| Variable | Descripción | Valor por defecto |
+|---|---|---|
+| `APP_ENVIRONMENT` | Ambiente en el que corre la API | `dev` |
+| `APP_VERSION` | Versión que informa el endpoint `/health` | `0.1.0` |
+
+En local no hace falta definirlas. En AWS las carga Terraform en la Lambda: `APP_VERSION` toma el valor de la variable `image_tag`.
 
 ---
 
 ## Despliegue
+
+> Los comandos de esta sección están escritos para bash (Linux, macOS o Git Bash). En PowerShell, `export AWS_PROFILE=malka` se escribe `$env:AWS_PROFILE = "malka"`, y los comandos cortados con `\` se escriben en una sola línea.
 
 ### 1. Imagen de contenedor
 
@@ -143,6 +230,31 @@ terraform apply
 - Si un plan muestra algo en `destroy` que no se pidió explícitamente, **frenar** y revisar.
 - Nunca imprimir el contenido del secreto de la base en la terminal.
 
+### Variables de Terraform
+
+| Variable | Para qué sirve |
+|---|---|
+| `project` / `environment` | Forman el prefijo de todos los recursos (`malka-suite-dev`) |
+| `region` | Región de AWS |
+| `vpc_cidr` | Rango de direcciones de la VPC |
+| `image_tag` | Etiqueta de la imagen de ECR que ejecuta la Lambda |
+| `origenes_permitidos` | Orígenes habilitados para CORS |
+| `habilitar_endpoints_interfaz` | Crea los VPC endpoints de SQS y Bedrock (apagados, tienen costo) |
+| `habilitar_endpoint_secretos` | Crea el VPC endpoint de Secrets Manager |
+| `db_clase_instancia` | Clase de la instancia de RDS |
+
+### Salidas útiles
+
+Se consultan desde `infra/` con `terraform output <nombre>`:
+
+| Salida | Para qué sirve |
+|---|---|
+| `api_base_url` | URL pública de la API; va en `VITE_API_BASE_URL` del frontend |
+| `health_url` | URL de la prueba de vida |
+| `ecr_repository_url` | Repositorio donde se suben las imágenes |
+| `lambda_api_nombre` | Nombre de la función, para buscar sus logs |
+| `db_secret_nombre` | Nombre del secreto con las credenciales de la base |
+
 ---
 
 ## Convenciones
@@ -166,14 +278,47 @@ terraform apply
 | #5 | RDS PostgreSQL + Secrets Manager | Hecho (PR #16) |
 | — | CORS para el frontend | Hecho (PR #15) |
 | #6 | S3, SQS y Cognito | Pendiente (Checkpoint 2) |
-| #9 | CI de lint y tests | Pendiente |
-| #10 | CI de deploy con OIDC | Pendiente |
+| #9 | CI de lint y tests | Pendiente (Checkpoint 2) |
+| #10 | CI de deploy con OIDC | Pendiente (Checkpoint 2) |
 
 ### Pendientes conocidos
 
 - `/health/ready` todavía no consulta la base: responde OK sin verificar dependencias.
 - `APP_VERSION` está fijo en `"latest"`; debe pasar a ser el SHA del commit cuando exista el pipeline (#9, #10).
 - Sin CI: hoy el build de la imagen y el `terraform apply` se hacen desde la máquina local.
+
+---
+
+## Problemas comunes
+
+**`uvicorn: command not found`**
+
+Uvicorn no está en `requirements.txt`. Instalarlo con `pip install uvicorn` dentro del entorno virtual.
+
+**PowerShell no deja activar el entorno virtual**
+
+Si aparece un error de que la ejecución de scripts está deshabilitada, habilitarla solo para tu usuario y volver a activar el entorno:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+.venv\Scripts\Activate.ps1
+```
+
+**El frontend muestra `blocked by CORS policy`**
+
+El origen del frontend no está en `origenes_permitidos`. Agregarlo y ejecutar `terraform apply`. No agregar `CORSMiddleware` en FastAPI.
+
+**Al crear la Lambda, Terraform dice que la imagen no existe**
+
+La Lambda corre una imagen de ECR, así que el repositorio tiene que tener al menos una imagen antes de crear la función. Subir la imagen primero (ver [Despliegue](#despliegue)).
+
+**Lambda rechaza la imagen**
+
+La imagen se construyó con attestations. Construirla con `--provenance=false --sbom=false`.
+
+**`terraform init` falla al acceder al estado**
+
+Falta `infra/backend.hcl` o el perfil de AWS no es `malka`. Verificar con `aws sts get-caller-identity --profile malka`.
 
 ---
 
