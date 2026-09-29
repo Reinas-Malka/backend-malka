@@ -185,3 +185,19 @@ terraform apply
 | [frontend-malka](https://github.com/Reinas-Malka/frontend-malka) | Aplicación React + Vite + TypeScript |
 
 El motivo de tener dos repositorios está documentado en [`docs/adr/0004-dos-repositorios.md`](docs/adr/0004-dos-repositorios.md).
+
+## IA: modelo y costos
+
+- Modelo: `us.anthropic.claude-haiku-4-5-20251001-v1:0` (inference profile, us-east-1).
+- Verificado el 29/09/2026: `converse` OK (`end_turn`, 13 tokens in / 4 out, 654 ms).
+- Precio: 1,00 USD por millón de tokens de entrada, 5,00 por millón de salida.
+- Por 1000 tokens: 0,001 USD de entrada y 0,005 USD de salida.
+- Plan B: Sonnet 4.5. Opus descartado por costo.
+- `claude-3-5-haiku-20241022` está EOL: devuelve ResourceNotFoundException.
+- El plan gratuito de AWS no bloquea Bedrock (riesgo del CP2 descartado).
+
+## Costo fijo de infraestructura
+
+- Cada VPC endpoint de interface: ~7,30 USD/mes.
+- Hoy solo Secrets Manager. Con SQS + bedrock-runtime pasa a ~22 USD/mes.
+- El endpoint de S3 es gateway: sin costo fijo.
