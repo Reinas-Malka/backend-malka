@@ -145,9 +145,10 @@ resource "aws_lambda_function" "worker" {
   timeout       = 60
   architectures = ["x86_64"]
 
-  # Concurrencia acotada: dos ejecuciones como maximo, para no saturar la
-  # base ni disparar el consumo de Bedrock cuando entra una hornada de mensajes.
-  reserved_concurrent_executions = 2
+  # Sin reserved_concurrent_executions a proposito: la cuota de la cuenta es
+  # 10 ejecuciones y AWS exige dejar 10 sin reservar, asi que reservar cualquiera
+  # cantidad es invalido (falla con PutFunctionConcurrency 400). El tope real
+  # de este worker es la cuota de la cuenta mas el batch_size 1 del mapping.
 
   image_config {
     command = ["app.worker.handler"]
