@@ -18,12 +18,20 @@ def handler(event: dict, context: object) -> dict:
     procesados = 0
 
     for registro in event.get("Records", []):
+        cuerpo = registro.get("body", "")
+
         logger.info(
             "mensaje recibido cola=%s id_mensaje=%s cuerpo=%s",
             registro.get("eventSourceARN", "?").split(":")[-1],
             registro.get("messageId", "?"),
-            registro.get("body", ""),
+            cuerpo,
         )
+
+        # Gancho de la prueba del DoD del #37: un cuerpo "veneno" falla
+        # siempre, reintenta 3 veces y termina en la DLQ.
+        if cuerpo == "veneno":
+            raise RuntimeError("mensaje veneno: tiene que terminar en la DLQ")
+
         procesados += 1
 
     return {"mensajes_procesados": procesados}
