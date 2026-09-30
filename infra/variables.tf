@@ -23,9 +23,9 @@ variable "vpc_cidr" {
 }
 
 variable "habilitar_endpoints_interfaz" {
-  description = "Crea los VPC endpoints de tipo interfaz. Tienen costo por hora, por eso estan apagados"
+  description = "Crea los VPC endpoints de tipo interfaz (SQS y bedrock-runtime). Tienen costo por hora (~14,60 USD/mes entre los dos); se prenden con el worker del #37, que corre en la VPC y no tiene NAT"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "image_tag" {

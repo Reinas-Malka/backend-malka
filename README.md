@@ -83,7 +83,7 @@ Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr
 
 El proyecto vive dentro del **plan gratuito nuevo de AWS**, con dos consecuencias que condicionaron el diseño: la retención de backups de RDS está limitada a 1 día y no se permite el autoscaling de almacenamiento.
 
-El único costo fijo relevante es el **VPC endpoint de interface de Secrets Manager: ~7,30 USD/mes**. Es el precio de no tener un NAT Gateway, que costaría unas cinco veces más. Lambda, API Gateway, RDS `db.t4g.micro` y ECR se mantienen dentro de los límites gratuitos para el volumen de este TP.
+El costo fijo son los **VPC endpoints de interface: ~7,30 USD/mes cada uno**. Hoy Secrets Manager, más SQS y bedrock-runtime desde el worker del #37 (~22 USD/mes en total). Es el precio de no tener un NAT Gateway, que costaría unas cinco veces más. Lambda, API Gateway, RDS `db.t4g.micro` y ECR se mantienen dentro de los límites gratuitos para el volumen de este TP.
 
 ---
 
@@ -92,6 +92,7 @@ El único costo fijo relevante es el **VPC endpoint de interface de Secrets Mana
 | Qué | Dónde | Detalle |
 |---|---|---|
 | Logs de la API | CloudWatch `/aws/lambda/malka-suite-dev-api` | Retención de 14 días. El grupo se declara en Terraform; si no, guardaría los logs para siempre |
+| Logs del worker | CloudWatch `/aws/lambda/malka-suite-dev-worker` | Retención de 14 días, mismo criterio que la API |
 | Trazas | AWS X-Ray | Tracing activo en la Lambda |
 | Logs de la base | CloudWatch, exportados desde RDS | Incluye toda consulta que tarde más de 500 ms |
 | Prueba de vida | `GET /health` | Usada por el monitoreo y el smoke test |
@@ -129,16 +130,18 @@ curl -i -X OPTIONS https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
 
 ```
 app/
-└── main.py              # Aplicación FastAPI y handler que invoca Lambda
+├── main.py              # Aplicación FastAPI y handler que invoca Lambda
+└── worker.py            # Handler que consume las colas SQS
 infra/
 ├── versions.tf          # Versiones de Terraform y providers; estado remoto en S3
-├── main.tf              # Prefijo común de nombres y zonas de disponibilidad
+├── main.tf              # Prefijo común de nombres, zonas y ARNs del modelo de Bedrock
 ├── variables.tf         # Variables generales del proyecto
 ├── network.tf           # VPC, subredes, security groups y VPC endpoints
 ├── rds.tf               # PostgreSQL, credenciales en Secrets Manager y su endpoint
 ├── ecr.tf               # Repositorio de imágenes y lifecycle policy
-├── compute.tf           # Lambda, rol IAM y grupo de logs
+├── compute.tf           # Lambda de API, rol IAM y grupo de logs
 ├── api.tf               # API Gateway: rutas, CORS y límites de tráfico
+├── sqs.tf               # Colas con DLQ, Lambda worker y alarmas de DLQ
 ├── outputs.tf           # Valores que se consultan después del apply
 └── backend.hcl.example  # Plantilla del backend de estado
 docs/
@@ -189,6 +192,8 @@ El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No
 |---|---|---|
 | `APP_ENVIRONMENT` | Ambiente en el que corre la API | `dev` |
 | `APP_VERSION` | Versión que informa el endpoint `/health` | `0.1.0` |
+| `COLA_DOCUMENTOS_URL` | URL de la cola SQS de documentos (la carga Terraform) | — |
+| `COLA_INGESTA_URL` | URL de la cola SQS de ingesta (la carga Terraform) | — |
 
 En local no hace falta definirlas. En AWS las carga Terraform en la Lambda: `APP_VERSION` toma el valor de la variable `image_tag`.
 
@@ -239,7 +244,7 @@ terraform apply
 | `vpc_cidr` | Rango de direcciones de la VPC |
 | `image_tag` | Etiqueta de la imagen de ECR que ejecuta la Lambda |
 | `origenes_permitidos` | Orígenes habilitados para CORS |
-| `habilitar_endpoints_interfaz` | Crea los VPC endpoints de SQS y Bedrock (apagados, tienen costo) |
+| `habilitar_endpoints_interfaz` | Crea los VPC endpoints de SQS y bedrock-runtime (prendidos desde el #37: el worker corre en la VPC y no tiene NAT) |
 | `habilitar_endpoint_secretos` | Crea el VPC endpoint de Secrets Manager |
 | `db_clase_instancia` | Clase de la instancia de RDS |
 
@@ -316,3 +321,19 @@ Falta `infra/backend.hcl` o el perfil de AWS no es `malka`. Verificar con `aws s
 | [frontend-malka](https://github.com/Reinas-Malka/frontend-malka) | Aplicación React + Vite + TypeScript |
 
 El motivo de tener dos repositorios está documentado en [`docs/adr/0004-dos-repositorios.md`](docs/adr/0004-dos-repositorios.md).
+
+## IA: modelo y costos
+
+- Modelo: `us.anthropic.claude-haiku-4-5-20251001-v1:0` (inference profile, us-east-1).
+- Verificado el 29/09/2026: `converse` OK (`end_turn`, 13 tokens in / 4 out, 654 ms).
+- Precio: 1,00 USD por millón de tokens de entrada, 5,00 por millón de salida.
+- Por 1000 tokens: 0,001 USD de entrada y 0,005 USD de salida.
+- Plan B: Sonnet 4.5. Opus descartado por costo.
+- `claude-3-5-haiku-20241022` está EOL: devuelve ResourceNotFoundException.
+- El plan gratuito de AWS no bloquea Bedrock (riesgo del CP2 descartado).
+
+## Costo fijo de infraestructura
+
+- Cada VPC endpoint de interface: ~7,30 USD/mes.
+- Hoy solo Secrets Manager. Con SQS + bedrock-runtime pasa a ~22 USD/mes.
+- El endpoint de S3 es gateway: sin costo fijo.
