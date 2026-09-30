@@ -7,7 +7,7 @@ negocio se van agregando sobre esta misma aplicacion.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from mangum import Mangum
@@ -46,7 +46,7 @@ def health() -> Salud:
         estado="ok",
         version=VERSION,
         entorno=ENTORNO,
-        momento=datetime.now(timezone.utc),
+        momento=datetime.now(UTC),
     )
 
 

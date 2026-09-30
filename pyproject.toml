@@ -1,0 +1,23 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S"]
+ignore = [
+    "S101", 
+    "B008", 
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["app"]          
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]       
+addopts = "-ra"          
+markers = [
+    "integration: necesita PostgreSQL; se excluye del CI hasta que entre RDS",
+]

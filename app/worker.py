@@ -8,12 +8,13 @@ con Bedrock (#40) reemplaza la logica dejando el mismo handler.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-def handler(event: dict, context: object) -> dict:
+def handler(event: dict[str, Any], context: object) -> dict[str, int]:
     """Procesa un lote de mensajes de SQS (batch_size 1: uno por ejecucion)."""
     procesados = 0
 
@@ -27,8 +28,6 @@ def handler(event: dict, context: object) -> dict:
             cuerpo,
         )
 
-        # Gancho de la prueba del DoD del #37: un cuerpo "veneno" falla
-        # siempre, reintenta 3 veces y termina en la DLQ.
         if cuerpo == "veneno":
             raise RuntimeError("mensaje veneno: tiene que terminar en la DLQ")
 

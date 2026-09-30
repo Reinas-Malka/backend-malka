@@ -175,7 +175,7 @@ source .venv/Scripts/activate
 # Windows (PowerShell)
 .venv\Scripts\Activate.ps1
 
-pip install -r requirements.txt uvicorn
+pip install -r requirements-dev.txt 
 uvicorn app.main:app --reload
 # http://127.0.0.1:8000/health
 # http://127.0.0.1:8000/docs  (documentación interactiva de FastAPI, solo en local)
@@ -271,20 +271,6 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 - **Tablero:** [Malka Suite — Checkpoint 1](https://github.com/orgs/Reinas-Malka/projects/1), con WIP límite 3 en *In Progress* y en *In Review*.
 
 ---
-
-## Estado del Checkpoint 1
-
-| Issue | Tema | Estado |
-|---|---|---|
-| #2 | Cuenta AWS, usuarios y perfil CLI | Hecho |
-| #4 | Red base: VPC, subredes, SGs, VPC endpoints | Hecho (PR #13) |
-| #7 | Endpoints de salud | Hecho (PR #14) |
-| #8 | ECR, Lambda y API Gateway | Hecho (PR #14) |
-| #5 | RDS PostgreSQL + Secrets Manager | Hecho (PR #16) |
-| — | CORS para el frontend | Hecho (PR #15) |
-| #6 | S3, SQS y Cognito | Pendiente (Checkpoint 2) |
-| #9 | CI de lint y tests | Pendiente (Checkpoint 2) |
-| #10 | CI de deploy con OIDC | Pendiente (Checkpoint 2) |
 
 ### Pendientes conocidos
 
