@@ -131,6 +131,7 @@ curl -i -X OPTIONS https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
 ```
 app/
 ├── main.py              # Aplicación FastAPI y handler que invoca Lambda
+├── config.py            # Configuración de conexión a la base de datos
 └── worker.py            # Handler que consume las colas SQS
 infra/
 ├── versions.tf          # Versiones de Terraform y providers; estado remoto en S3
@@ -149,6 +150,8 @@ docs/
 ├── arquitectura.jpg     # Diagrama cloud
 └── arquitectura.pdf
 tests/                   # Pruebas automatizadas
+migraciones/             # Migraciones de Alembic (versions/ tiene una por cambio)
+alembic.ini              # Configuración de Alembic
 Dockerfile               # Imagen de Lambda con Python 3.12
 requirements.txt         # Dependencias de la API
 AI-DECISIONS.md          # Registro de decisiones asistidas por IA
@@ -181,7 +184,7 @@ uvicorn app.main:app --reload
 # http://127.0.0.1:8000/docs  (documentación interactiva de FastAPI, solo en local)
 ```
 
-Uvicorn no está en `requirements.txt` porque en AWS no se usa: allá la API la ejecuta Lambda a través de Mangum. Dejarlo afuera mantiene la imagen más liviana.
+Uvicorn está en `requirements-dev.txt` y no en `requirements.txt` porque en AWS no se usa: allá la API la ejecuta Lambda a través de Mangum. 
 
 El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No necesita credenciales de AWS**: todo lo que empieza con `VITE_` queda expuesto en el bundle del navegador.
 
@@ -198,6 +201,45 @@ El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No
 En local no hace falta definirlas. En AWS las carga Terraform en la Lambda: `APP_VERSION` toma el valor de la variable `image_tag`.
 
 ---
+
+## Migraciones de base de datos
+
+El esquema se versiona con [Alembic](https://alembic.sqlalchemy.org/). No se usa `create_all()`: cada cambio es una migración en `migraciones/versions/`, con `upgrade` y `downgrade`.
+
+La dirección de la base la arma `app/config.py`: en local, con la variable `DATABASE_URL`; en AWS, con el secreto de Secrets Manager indicado en `DB_SECRET_NAME`.
+
+Las tablas de negocio tienen Row Level Security forzado con la política `aislamiento_por_tenant`: cada consulta solo ve las filas del tenant definido con `SET LOCAL app.tenant_id` en esa transacción. Sin tenant definido, devuelven cero filas.
+
+### Correr las migraciones en local
+
+Con Docker Desktop abierto, levantar PostgreSQL 16 y crear un usuario sin privilegios de superusuario (los superusuarios saltean RLS):
+
+```bash
+docker run --name malka-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
+docker exec -it malka-postgres psql -U postgres -c "CREATE ROLE malka_owner LOGIN PASSWORD 'malka';" -c "CREATE DATABASE malka OWNER malka_owner;"
+```
+
+Definir la URL y aplicar las migraciones:
+
+```bash
+# bash
+export DATABASE_URL="postgresql+psycopg://malka_owner:malka@localhost:5432/malka"
+# PowerShell
+$env:DATABASE_URL = "postgresql+psycopg://malka_owner:malka@localhost:5432/malka"
+
+alembic upgrade head      # aplica todas las migraciones
+alembic current           # muestra la versión actual
+alembic downgrade -1      # deshace la última
+```
+
+### Crear una migración nueva
+
+```bash
+alembic revision -m "descripcion del cambio"
+```
+
+Genera un archivo en `migraciones/versions/`. Las migraciones se escriben a mano y cada una tiene que tener un `downgrade` que funcione: antes de abrir el PR, probar `alembic downgrade -1` y volver a subir.
+
 
 ## Despliegue
 
@@ -284,7 +326,7 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 
 **`uvicorn: command not found`**
 
-Uvicorn no está en `requirements.txt`. Instalarlo con `pip install uvicorn` dentro del entorno virtual.
+Uvicorn no está en `requirements.txt`. Instalarlo con `pip install -r requirements-dev.txt`. 
 
 **PowerShell no deja activar el entorno virtual**
 
