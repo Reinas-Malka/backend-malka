@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
+from app.config import obtener_url_base_de_datos
 from app.errores import ConflictoError, ValidacionError, registrar_manejadores
 from app.observabilidad import FormateadorJson, instalar_observabilidad
 
@@ -68,3 +69,11 @@ def logs() -> Iterator[io.StringIO]:
     logger.addHandler(handler)
     yield salida
     logger.removeHandler(handler)
+
+
+@pytest.fixture
+def config_limpia() -> Iterator[None]:
+    """La URL de la base se guarda en cache: se limpia antes y despues del test."""
+    obtener_url_base_de_datos.cache_clear()
+    yield
+    obtener_url_base_de_datos.cache_clear()
