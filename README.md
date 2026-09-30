@@ -171,7 +171,6 @@ Los logs nunca incluyen headers, cuerpos ni tokens, y cualquier clave sensible (
 ```
 app/
 ├── main.py              # Aplicación FastAPI y handler que invoca Lambda
-├── config.py            # Configuración de conexión a la base de datos
 ├── errores.py           # Excepciones de dominio y forma única de errores
 ├── observabilidad.py    # request_id, middleware y logs JSON
 ├── contexto.py          # request_id del request en curso (contextvars)
@@ -186,6 +185,7 @@ infra/
 ├── compute.tf           # Lambda de API, rol IAM y grupo de logs
 ├── api.tf               # API Gateway: rutas, CORS y límites de tráfico
 ├── sqs.tf               # Colas con DLQ, Lambda worker y alarmas de DLQ
+├── oidc.tf              # Proveedor OIDC de GitHub y rol de deploy
 ├── outputs.tf           # Valores que se consultan después del apply
 └── backend.hcl.example  # Plantilla del backend de estado
 docs/
@@ -193,8 +193,9 @@ docs/
 ├── arquitectura.jpg     # Diagrama cloud
 └── arquitectura.pdf
 tests/                   # Pruebas automatizadas
-migraciones/             # Migraciones de Alembic (versions/ tiene una por cambio)
-alembic.ini              # Configuración de Alembic
+.github/workflows/
+├── ci.yml               # Lint, tipos, tests, Terraform e imagen en cada PR (#9)
+└── deploy.yml           # Deploy a AWS en cada merge a main, con OIDC (#10)
 Dockerfile               # Imagen de Lambda con Python 3.12
 requirements.txt         # Dependencias de la API
 AI-DECISIONS.md          # Registro de decisiones asistidas por IA
@@ -227,7 +228,7 @@ uvicorn app.main:app --reload
 # http://127.0.0.1:8000/docs  (documentación interactiva de FastAPI, solo en local)
 ```
 
-Uvicorn está en `requirements-dev.txt` y no en `requirements.txt` porque en AWS no se usa: allá la API la ejecuta Lambda a través de Mangum. 
+Uvicorn no está en `requirements.txt` porque en AWS no se usa: allá la API la ejecuta Lambda a través de Mangum. Dejarlo afuera mantiene la imagen más liviana.
 
 El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No necesita credenciales de AWS**: todo lo que empieza con `VITE_` queda expuesto en el bundle del navegador.
 
@@ -245,50 +246,63 @@ En local no hace falta definirlas. En AWS las carga Terraform en la Lambda: `APP
 
 ---
 
-## Migraciones de base de datos
-
-El esquema se versiona con [Alembic](https://alembic.sqlalchemy.org/). No se usa `create_all()`: cada cambio es una migración en `migraciones/versions/`, con `upgrade` y `downgrade`.
-
-La dirección de la base la arma `app/config.py`: en local, con la variable `DATABASE_URL`; en AWS, con el secreto de Secrets Manager indicado en `DB_SECRET_NAME`.
-
-Las tablas de negocio tienen Row Level Security forzado con la política `aislamiento_por_tenant`: cada consulta solo ve las filas del tenant definido con `SET LOCAL app.tenant_id` en esa transacción. Sin tenant definido, devuelven cero filas.
-
-### Correr las migraciones en local
-
-Con Docker Desktop abierto, levantar PostgreSQL 16 y crear un usuario sin privilegios de superusuario (los superusuarios saltean RLS):
-
-```bash
-docker run --name malka-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
-docker exec -it malka-postgres psql -U postgres -c "CREATE ROLE malka_owner LOGIN PASSWORD 'malka';" -c "CREATE DATABASE malka OWNER malka_owner;"
-```
-
-Definir la URL y aplicar las migraciones:
-
-```bash
-# bash
-export DATABASE_URL="postgresql+psycopg://malka_owner:malka@localhost:5432/malka"
-# PowerShell
-$env:DATABASE_URL = "postgresql+psycopg://malka_owner:malka@localhost:5432/malka"
-
-alembic upgrade head      # aplica todas las migraciones
-alembic current           # muestra la versión actual
-alembic downgrade -1      # deshace la última
-```
-
-### Crear una migración nueva
-
-```bash
-alembic revision -m "descripcion del cambio"
-```
-
-Genera un archivo en `migraciones/versions/`. Las migraciones se escriben a mano y cada una tiene que tener un `downgrade` que funcione: antes de abrir el PR, probar `alembic downgrade -1` y volver a subir.
-
-
 ## Despliegue
 
-> Los comandos de esta sección están escritos para bash (Linux, macOS o Git Bash). En PowerShell, `export AWS_PROFILE=malka` se escribe `$env:AWS_PROFILE = "malka"`, y los comandos cortados con `\` se escriben en una sola línea.
+### Automático: GitHub Actions con OIDC
 
-### 1. Imagen de contenedor
+Cada merge a `main` publica la versión nueva sin que nadie toque una terminal (`.github/workflows/deploy.yml`). También se puede disparar a mano desde *Actions → Deploy → Run workflow*, siempre sobre `main`.
+
+1. **Credenciales temporales por OIDC.** El job pide un token a GitHub y asume el rol `malka-suite-dev-github-actions` (`infra/oidc.tf`). El rol solo acepta tokens de este repositorio y de la rama `main`; no hay claves de AWS guardadas en ningún lado.
+2. **Build y push** de la imagen con los tags `<sha del commit>` y `latest`.
+3. **Migraciones:** actualiza e invoca la Lambda de migraciones. Si la respuesta trae `FunctionError`, el deploy se frena y la API queda con la versión anterior. Este paso se saltea mientras `LAMBDA_MIGRACIONES_NAME` no esté configurado (#53).
+4. **API y worker:** `update-function-code` apuntando a `latest` y espera a que terminen de actualizarse.
+5. **Smoke test:** `curl` contra `/health/ready`; si no responde 200, la corrida queda en rojo.
+
+Se actualiza apuntando a `latest` a propósito: es la misma URI que tiene Terraform en `image_uri`, así que **`terraform plan` sigue sin cambios después de un deploy**. El tag con el SHA queda en ECR para saber qué commit está corriendo y para poder volver atrás.
+
+El pipeline **no** corre `terraform apply`: su rol solo puede subir imágenes a ECR y actualizar las Lambdas del proyecto. Los cambios de infraestructura siguen siendo manuales (ver [Infraestructura](#2-infraestructura)).
+
+#### Configuración (una sola vez)
+
+1. Aplicar `infra/oidc.tf` a mano (`terraform apply`) y copiar la salida `github_actions_role_arn`. Si el proveedor OIDC de GitHub ya existía en la cuenta, importarlo antes (el comando está al principio de `oidc.tf`).
+2. Cargar en *Settings → Secrets and variables → Actions → Secrets*:
+
+| Secret | Valor | Sale de |
+|---|---|---|
+| `AWS_ROLE_ARN` | ARN del rol de deploy | `terraform output github_actions_role_arn` |
+| `ECR_REPOSITORY` | `malka-suite-dev-backend` | nombre del repositorio de `ecr_repository_url` |
+| `LAMBDA_FUNCTION_NAME` | `malka-suite-dev-api` | `terraform output lambda_api_nombre` |
+| `LAMBDA_WORKER_NAME` | `malka-suite-dev-worker` | `terraform output lambda_worker_nombre` |
+| `LAMBDA_MIGRACIONES_NAME` | `malka-suite-dev-migraciones` | cuando exista la Lambda (#53); mientras tanto, sin cargar |
+| `HEALTH_URL` | `<api_base_url>/health/ready` | `terraform output api_base_url` |
+
+El repositorio es público: el número de cuenta no va escrito en el workflow, y el paso de credenciales lo enmascara en los logs.
+
+#### Revertir un deploy
+
+- **Camino normal:** `git revert <commit>` en una rama, PR y merge. El pipeline despliega la versión anterior y queda registrado quién y por qué.
+- **Emergencia:** volver a etiquetar como `latest` una imagen anterior por su SHA y actualizar las Lambdas (ECR conserva las últimas 10 imágenes):
+
+```bash
+export AWS_PROFILE=malka
+REPO=malka-suite-dev-backend
+SHA=<sha-del-commit-bueno>
+MANIFIESTO=$(aws ecr batch-get-image --repository-name $REPO --image-ids imageTag=$SHA \
+  --query 'images[0].imageManifest' --output text)
+aws ecr put-image --repository-name $REPO --image-tag latest --image-manifest "$MANIFIESTO"
+URI=$(aws ecr describe-repositories --repository-names $REPO --query 'repositories[0].repositoryUri' --output text)
+for fn in malka-suite-dev-api malka-suite-dev-worker; do
+  aws lambda update-function-code --function-name $fn --image-uri $URI:latest > /dev/null
+done
+```
+
+No apuntar la Lambda directamente a `:<sha>`: Terraform lo vería como un cambio. Una migración ya aplicada no se revierte sola: si hace falta, se invoca la Lambda de migraciones con `{"accion": "downgrade", "revision": "-1"}`.
+
+### Manual
+
+> Para aplicar infraestructura o si el pipeline no está disponible. Los comandos de esta sección están escritos para bash (Linux, macOS o Git Bash). En PowerShell, `export AWS_PROFILE=malka` se escribe `$env:AWS_PROFILE = "malka"`, y los comandos cortados con `\` se escriben en una sola línea.
+
+#### 1. Imagen de contenedor
 
 Lambda rechaza las imágenes que traen attestations, por eso los dos flags:
 
@@ -302,7 +316,7 @@ docker tag  malka-suite-dev-backend:$(git rev-parse --short HEAD) \
 docker push 961868442562.dkr.ecr.us-east-1.amazonaws.com/malka-suite-dev-backend:$(git rev-parse --short HEAD)
 ```
 
-### 2. Infraestructura
+#### 2. Infraestructura
 
 El backend de estado se configura con `backend.hcl`, que **no está versionado** (ver `infra/backend.hcl.example`).
 
@@ -344,6 +358,7 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 | `ecr_repository_url` | Repositorio donde se suben las imágenes |
 | `lambda_api_nombre` | Nombre de la función, para buscar sus logs |
 | `db_secret_nombre` | Nombre del secreto con las credenciales de la base |
+| `github_actions_role_arn` | Rol que asume el deploy; va en el secret `AWS_ROLE_ARN` |
 
 ---
 
@@ -360,8 +375,8 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 ### Pendientes conocidos
 
 - `/health/ready` todavía no consulta la base: responde OK sin verificar dependencias.
-- `APP_VERSION` está fijo en `"latest"`; debe pasar a ser el SHA del commit cuando exista el pipeline (#9, #10).
-- Sin CI: hoy el build de la imagen y el `terraform apply` se hacen desde la máquina local.
+- `APP_VERSION` sigue fijo en `"latest"`: el commit desplegado se ve en el tag de la imagen en ECR y en el resumen de cada corrida de *Deploy*, pero todavía no en `/health`.
+- `terraform apply` sigue siendo manual, desde la máquina local.
 
 ---
 
@@ -369,7 +384,7 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 
 **`uvicorn: command not found`**
 
-Uvicorn no está en `requirements.txt`. Instalarlo con `pip install -r requirements-dev.txt`. 
+Uvicorn no está en `requirements.txt`. Instalarlo con `pip install uvicorn` dentro del entorno virtual.
 
 **PowerShell no deja activar el entorno virtual**
 
@@ -391,6 +406,14 @@ La Lambda corre una imagen de ECR, así que el repositorio tiene que tener al me
 **Lambda rechaza la imagen**
 
 La imagen se construyó con attestations. Construirla con `--provenance=false --sbom=false`.
+
+**El deploy falla con `Not authorized to perform sts:AssumeRoleWithWebIdentity`**
+
+El workflow no corrió sobre `main` (el rol solo confía en esa rama), o falta `permissions: id-token: write`, o el secret `AWS_ROLE_ARN` no coincide con `terraform output github_actions_role_arn`.
+
+**El deploy se frena en "Migraciones"**
+
+La Lambda de migraciones devolvió `FunctionError`. El detalle está en la salida del paso y en CloudWatch (`/aws/lambda/malka-suite-dev-migraciones`). La API no se actualizó: sigue con la versión anterior.
 
 **`terraform init` falla al acceder al estado**
 
