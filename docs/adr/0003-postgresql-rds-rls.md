@@ -7,7 +7,7 @@
 
 ## Contexto
 
-Malka Suite maneja datos relacionales con integridad referencial clara (usuarios, predios, vigilancias, eventos) y es multi-inquilino: varios clientes comparten la aplicación y **ninguno debe poder ver los datos de otro**. También necesitamos consultas con joins y agregaciones para los tableros.
+Malka Suite maneja datos relacionales con integridad referencial clara (tandas de cría, madres, razas, bancos, clientes, pedidos y documentos comerciales) y es multi-inquilino: varios clientes comparten la aplicación y **ninguno debe poder ver los datos de otro**. También necesitamos consultas con joins y agregaciones para los tableros.
 
 Un TP que guarda contraseñas en el repositorio o en variables de entorno en texto plano pierde puntos con razones de sobra, así que el manejo del secreto era parte del problema desde el principio.
 
