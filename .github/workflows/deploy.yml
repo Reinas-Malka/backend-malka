@@ -1,0 +1,112 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write 
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    if: github.ref == 'refs/heads/main'
+    env:
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+      LAMBDA_API: ${{ secrets.LAMBDA_FUNCTION_NAME }}
+      LAMBDA_WORKER: ${{ secrets.LAMBDA_WORKER_NAME }}
+      LAMBDA_MIGRACIONES: ${{ secrets.LAMBDA_MIGRACIONES_NAME }}
+      HEALTH_URL: ${{ secrets.HEALTH_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credenciales temporales por OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: deploy-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Login a ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build y push de la imagen
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGEN="$REGISTRY/$ECR_REPOSITORY"
+          docker build --provenance=false --sbom=false \
+            -t "$IMAGEN:$GITHUB_SHA" -t "$IMAGEN:latest" .
+          docker push "$IMAGEN:$GITHUB_SHA"
+          docker push "$IMAGEN:latest"
+          echo "IMAGEN_LATEST=$IMAGEN:latest" >> "$GITHUB_ENV"
+
+
+      - name: Migraciones
+        run: |
+          if [ -z "$LAMBDA_MIGRACIONES" ]; then
+            echo "::notice::LAMBDA_MIGRACIONES_NAME no esta configurado: se saltean las migraciones."
+            exit 0
+          fi
+
+          aws lambda update-function-code --function-name "$LAMBDA_MIGRACIONES" \
+            --image-uri "$IMAGEN_LATEST" > /dev/null
+          aws lambda wait function-updated-v2 --function-name "$LAMBDA_MIGRACIONES"
+
+          # La Lambda puede tardar hasta 300 s; el CLI corta a los 60 por defecto.
+          aws lambda invoke --function-name "$LAMBDA_MIGRACIONES" \
+            --cli-binary-format raw-in-base64-out \
+            --cli-read-timeout 320 \
+            --payload '{"accion": "upgrade", "revision": "head"}' \
+            respuesta.json > metadatos.json
+          cat respuesta.json
+
+          # aws lambda invoke termina bien aunque la funcion haya fallado: el
+          # error solo aparece en FunctionError. Si falla, el deploy se frena
+          # aca y la API sigue con la version anterior.
+          if [ -n "$(jq -r '.FunctionError // empty' metadatos.json)" ]; then
+            echo "::error::La migracion fallo; no se actualiza la API."
+            exit 1
+          fi
+
+      - name: Actualizar API y worker
+        run: |
+          for funcion in "$LAMBDA_API" "$LAMBDA_WORKER"; do
+            if [ -z "$funcion" ]; then
+              continue
+            fi
+            echo "Actualizando $funcion"
+            aws lambda update-function-code --function-name "$funcion" \
+              --image-uri "$IMAGEN_LATEST" > /dev/null
+            aws lambda wait function-updated-v2 --function-name "$funcion"
+          done
+
+      - name: Smoke test
+        run: |
+          curl -fsS --retry 5 --retry-delay 5 --retry-all-errors "$HEALTH_URL"
+          echo
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "### Deploy ${{ job.status }}"
+            echo ""
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Imagen: \`$ECR_REPOSITORY:$GITHUB_SHA\` (tambien \`latest\`)"
+            echo "- Disparado por: $GITHUB_ACTOR (${{ github.event_name }})"
+          } >> "$GITHUB_STEP_SUMMARY"
