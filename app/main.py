@@ -13,6 +13,9 @@ from fastapi import FastAPI
 from mangum import Mangum
 from pydantic import BaseModel
 
+from app.errores import registrar_manejadores
+from app.observabilidad import instalar_observabilidad
+
 VERSION = os.getenv("APP_VERSION", "0.1.0")
 ENTORNO = os.getenv("APP_ENVIRONMENT", "dev")
 
@@ -21,6 +24,9 @@ app = FastAPI(
     version=VERSION,
     description="Backend de gestion para la cabania apicola Malka.",
 )
+
+registrar_manejadores(app)
+instalar_observabilidad(app)
 
 
 class Salud(BaseModel):
@@ -61,5 +67,4 @@ def ready() -> Disponibilidad:
     return Disponibilidad(estado="ok", dependencias=dependencias)
 
 
-# Punto de entrada que usa Lambda: traduce el evento de API Gateway a ASGI.
 handler = Mangum(app, lifespan="off")

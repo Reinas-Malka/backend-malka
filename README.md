@@ -97,6 +97,7 @@ El costo fijo son los **VPC endpoints de interface: ~7,30 USD/mes cada uno**. Ho
 | Logs de la base | CloudWatch, exportados desde RDS | Incluye toda consulta que tarde más de 500 ms |
 | Prueba de vida | `GET /health` | Usada por el monitoreo y el smoke test |
 | Límite de tráfico | API Gateway | 20 requests por segundo, ráfagas de hasta 50 |
+| Log de acceso | CloudWatch, una línea JSON por request | `request_id`, `tenant_id`, `user_id`, `method`, `route`, `status`, `latency_ms` (ver [Errores y request_id](#errores-y-request_id)) |
 
 ---
 
@@ -124,6 +125,45 @@ curl -i -X OPTIONS https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
 
 **Limitación conocida:** los previews de Vercel generan un subdominio distinto en cada deploy, así que una lista de orígenes exactos no los cubre. Se resuelve en el Checkpoint 2 con un dominio fijo.
 
+### Errores y request_id
+
+Todos los errores responden con la misma forma, sin importar de dónde vengan:
+
+```json
+{
+  "error": {
+    "code": "tanda_cerrada",
+    "message": "La tanda ya está cerrada.",
+    "details": {"tanda_id": 7},
+    "request_id": "JKJaXmPLvHcESHA="
+  }
+}
+```
+
+| Status | `code` por defecto | Cuándo |
+|---|---|---|
+| 409 | `conflicto` | `ConflictoError`: el pedido choca con el estado actual |
+| 422 | `validacion` | `ValidacionError` (regla de negocio) o datos mal formados. En este caso `details.campos` indica qué campo falló, sin devolver el valor recibido |
+| 404 / 405 | `no_encontrado` / `metodo_no_permitido` | Ruta o método inexistente |
+| 500 | `error_interno` | Error inesperado. Se loguea con su traza; al cliente no le llega el detalle |
+
+En un endpoint, los errores se lanzan, no se arman a mano:
+
+```python
+from app.errores import ConflictoError
+
+raise ConflictoError("La tanda ya está cerrada.", code="tanda_cerrada", details={"tanda_id": tanda_id})
+```
+
+Cada respuesta trae el header `x-request-id` (el que mandó el cliente si es válido, si no el de API Gateway o uno nuevo). Es el mismo valor que aparece en el cuerpo del error y en la línea de log, así que alcanza con él para encontrar un request en CloudWatch Logs Insights:
+
+```
+fields @timestamp, route, status, latency_ms
+| filter request_id = "JKJaXmPLvHcESHA="
+```
+
+Los logs nunca incluyen headers, cuerpos ni tokens, y cualquier clave sensible (`authorization`, `token`, `cuit`, `cuil`, `dni`, `cbu`, etc.) se reemplaza por `[REDACTADO]`.
+
 ---
 
 ## Estructura del proyecto
@@ -131,6 +171,9 @@ curl -i -X OPTIONS https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
 ```
 app/
 ├── main.py              # Aplicación FastAPI y handler que invoca Lambda
+├── errores.py           # Excepciones de dominio y forma única de errores
+├── observabilidad.py    # request_id, middleware y logs JSON
+├── contexto.py          # request_id del request en curso (contextvars)
 └── worker.py            # Handler que consume las colas SQS
 infra/
 ├── versions.tf          # Versiones de Terraform y providers; estado remoto en S3
