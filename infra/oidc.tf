@@ -11,8 +11,14 @@
 ###############################################################################
 
 locals {
-  github_repositorio = "Reinas-Malka/backend-malka"
-  github_rama_deploy = "main"
+  # Desde 2025 GitHub emite el claim sub del token OIDC con los IDs estables
+  # de org y repo ademas de los nombres, para que un renombre no rompa la
+  # federacion. Verificado con un workflow de debug (run 36798383213): el
+  # sub real es repo:Reinas-Malka@329292836/backend-malka@1375132426:ref:...
+  # y la condicion StringEquals sin los IDs nunca matchea (STS responde
+  # "Not authorized to perform sts:AssumeRoleWithWebIdentity").
+  github_repositorio_sub = "Reinas-Malka@329292836/backend-malka@1375132426"
+  github_rama_deploy     = "main"
 
   # Lambdas que el pipeline actualiza. Migraciones (#53) se referencia por
   # nombre porque todavia no existe; el permiso queda listo para cuando entre.
@@ -71,7 +77,7 @@ data "aws_iam_policy_document" "github_confianza" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.github_repositorio}:ref:refs/heads/${local.github_rama_deploy}"]
+      values   = ["repo:${local.github_repositorio_sub}:ref:refs/heads/${local.github_rama_deploy}"]
     }
   }
 }
