@@ -8,5 +8,9 @@ RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 COPY app ${LAMBDA_TASK_ROOT}/app
 
+# Migraciones de Alembic: las aplica la Lambda de migraciones (app/migrar.py).
+COPY alembic.ini ${LAMBDA_TASK_ROOT}/
+COPY migraciones ${LAMBDA_TASK_ROOT}/migraciones
+
 # Modulo.funcion que Lambda invoca en cada request.
 CMD ["app.main.handler"]
