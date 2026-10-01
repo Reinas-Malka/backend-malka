@@ -1,6 +1,6 @@
 # ADR 0002 — Red privada sin NAT Gateway, con VPC endpoints
 
-- **Estado:** aceptada
+- **Estado:** aceptada (enmienda 01/10/2026)
 - **Fecha:** 2026-09-20
 - **Decisores:** equipo Reinas Malka
 - **Issues:** #4
@@ -9,14 +9,17 @@
 
 La Lambda necesita alcanzar la base de datos y leer su contraseña de Secrets Manager. Para hablar con RDS tiene que estar dentro de la VPC, y una Lambda en VPC **pierde la salida a internet** salvo que exista una ruta explícita.
 
-La solución de manual es un **NAT Gateway**, pero cuesta alrededor de **32 USD/mes** más el tráfico procesado, por cada AZ. Para un TP que debe vivir en el plan gratuito, ese solo recurso sería el gasto más grande del proyecto.
+La solución de manual es un **NAT Gateway**, pero cuesta alrededor de **64 USD/mes** más el tráfico procesado, por cada AZ. Para un TP que debe vivir en el plan gratuito, ese solo recurso sería el gasto más grande del proyecto.
 
 ## Decisión
 
-La VPC (`10.0.0.0/16`) tiene **solo subredes privadas, sin internet gateway y sin NAT Gateway**. El acceso a los servicios de AWS se resuelve con **VPC endpoints**:
+La VPC (`10.20.0.0/16`) tiene **solo subredes privadas, sin internet gateway y sin NAT Gateway**. El acceso a los servicios de AWS se resuelve con **VPC endpoints**:
 
 - **S3**: endpoint tipo *gateway* — sin costo fijo.
 - **Secrets Manager**: endpoint tipo *interface* — ~7,30 USD/mes.
+- **SQS** y **bedrock-runtime** *(agregados en el Checkpoint 2, #37)*: endpoints tipo *interface*.
+
+**Enmienda del 01/10/2026:** los endpoints de interface se cobran **por AZ** (~7,30 USD/mes por endpoint-AZ). Todos quedan en **una sola subred**: duplicar AZ duplica el costo y no se justifica en este ambiente. Además `bedrock-runtime` se crea apagado (`habilitar_endpoint_bedrock = false`) hasta que el worker haga su primera llamada real (#40). Costo fijo de endpoints: **~14,60 USD/mes**.
 
 Los security groups implementan el acceso mínimo: el SG de RDS acepta el puerto 5432 **únicamente desde el SG de la Lambda** (referencia entre grupos, no rangos de IP), y el SG de los endpoints acepta 443 solo desde el SG de la Lambda.
 

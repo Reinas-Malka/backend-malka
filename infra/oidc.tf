@@ -19,13 +19,8 @@ locals {
   # "Not authorized to perform sts:AssumeRoleWithWebIdentity").
   github_repositorio_sub = "Reinas-Malka@329292836/backend-malka@1375132426"
   github_rama_deploy     = "main"
-
-  # Lambdas que el pipeline actualiza. Migraciones (#53) se referencia por
-  # nombre porque todavia no existe; el permiso queda listo para cuando entre.
-  lambda_migraciones_nombre = "${local.name}-migraciones"
 }
 
-data "aws_caller_identity" "cuenta_oidc" {}
 
 ###############################################################################
 # Proveedor de identidad
@@ -101,12 +96,11 @@ resource "aws_iam_role" "github_actions" {
 ###############################################################################
 
 locals {
-  arn_lambda_base = "arn:aws:lambda:${var.region}:${data.aws_caller_identity.cuenta_oidc.account_id}:function"
-
+  # Las tres Lambdas que el pipeline actualiza, por referencia al recurso.
   lambdas_desplegables = [
     aws_lambda_function.api.arn,
     aws_lambda_function.worker.arn,
-    "${local.arn_lambda_base}:${local.lambda_migraciones_nombre}",
+    aws_lambda_function.migraciones.arn,
   ]
 }
 
@@ -146,7 +140,7 @@ data "aws_iam_policy_document" "github_deploy" {
   statement {
     sid       = "InvocarMigraciones"
     actions   = ["lambda:InvokeFunction"]
-    resources = ["${local.arn_lambda_base}:${local.lambda_migraciones_nombre}"]
+    resources = [aws_lambda_function.migraciones.arn]
   }
 }
 

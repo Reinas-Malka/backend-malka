@@ -15,7 +15,7 @@ Para que GitHub publique en AWS necesita autenticarse. La forma habitual, un usu
 
 - **Integración continua (#9):** cada PR corre formato, lint, mypy estricto, tests, `terraform validate` y el build de la imagen. Los cuatro jobs son *required status checks* del ruleset de `main`: un PR en rojo no se puede mergear.
 - **Despliegue continuo (#10):** cada merge a `main` construye la imagen, la sube a ECR con el SHA y `latest`, aplica las migraciones, actualiza la API y el worker, y corre un smoke test contra `/health/ready`.
-- **Autenticación por OIDC:** AWS confía en los tokens que emite GitHub. El rol `malka-suite-dev-github-actions` solo acepta tokens con `sub = repo:Reinas-Malka/backend-malka:ref:refs/heads/main`, y STS entrega credenciales temporales de una hora como máximo.
+- **Autenticación por OIDC:** AWS confía en los tokens que emite GitHub. El rol `malka-suite-dev-github-actions` solo acepta tokens con `sub = repo:Reinas-Malka@329292836/backend-malka@1375132426:ref:refs/heads/main`, y STS entrega credenciales temporales de una hora como máximo. *(Enmienda, PR #57: desde 2025 GitHub emite el `sub` con los IDs estables de org y repo además de los nombres — sin los IDs, la condición `StringEquals` nunca matcheaba y STS rechazaba con `Not authorized`. Los claims reales se verificaron con un workflow de debug.)*
 - **Mínimo privilegio:** el rol puede subir imágenes a un repositorio de ECR, actualizar las Lambdas del proyecto e invocar la de migraciones. Nada de IAM, VPC, RDS ni Secrets Manager.
 - **La infraestructura sigue siendo manual:** el pipeline no corre `terraform apply`.
 
