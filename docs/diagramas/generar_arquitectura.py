@@ -78,9 +78,7 @@ with Diagram(
 
     # ================================================= ZONA DATOS Y SECRETOS ===
     with Cluster("Datos y gestión de secretos"):
-        secretos = SecretsManager(
-            "Secrets Manager\ndb/owner\n(gestor de contraseñas)"
-        )
+        secretos = SecretsManager("Secrets Manager\ndb/owner\n(gestor de contraseñas)")
         rds = RDS("RDS PostgreSQL 16\nforce SSL · RLS (#19)")
         bucket = S3("S3 documentos\nversionado · SSE (#38)")
 
@@ -100,21 +98,27 @@ with Diagram(
     # --- camino asincronico ---
     api >> Edge(color="#2b6cb0", label="encola") >> sqs
     sqs >> Edge(color="#2b6cb0", label="event source") >> worker
-    sqs >> Edge(
-        color="#c0392b", style="dashed", label="si falla 3 veces"
-    ) >> dlq >> FLUJO >> alarma
+    (
+        sqs
+        >> Edge(color="#c0392b", style="dashed", label="si falla 3 veces")
+        >> dlq
+        >> FLUJO
+        >> alarma
+    )
 
     # --- el binario nunca pasa por la API ---
-    navegador >> Edge(
-        color="#dd6b20", label="sube/baja por\nURL prefirmada"
-    ) >> bucket
+    navegador >> Edge(color="#dd6b20", label="sube/baja por\nURL prefirmada") >> bucket
     api >> Edge(color="#dd6b20", label="firma URLs") >> ep_s3 >> SUAVE >> bucket
 
     # --- el worker consulta y redacta ---
     worker >> Edge(color="#2b6cb0", label="contexto") >> rds
-    worker >> Edge(
-        color="#2b6cb0", label="converse · salida\nvalidada (#40)"
-    ) >> ep_bedrock >> Edge(color="#2b6cb0", minlen="2") >> bedrock
+    (
+        worker
+        >> Edge(color="#2b6cb0", label="converse · salida\nvalidada (#40)")
+        >> ep_bedrock
+        >> Edge(color="#2b6cb0", minlen="2")
+        >> bedrock
+    )
     api >> SUAVE >> ep_sqs >> SUAVE >> sqs
 
     # --- secretos: credenciales de la base, nunca en codigo ---
