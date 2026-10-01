@@ -78,6 +78,7 @@ Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr
 | Secrets Manager | `malka-suite-dev/db/owner` | Credenciales de la base |
 | CloudWatch Logs | `/aws/lambda/malka-suite-dev-api` | Logs de la API |
 | S3 | `malka-suite-tfstate-961868442562` | Estado remoto de Terraform |
+| Lambda | `malka-suite-dev-migraciones` | Aplica las migraciones de Alembic dentro de la VPC |
 
 ### Costos
 
@@ -172,6 +173,7 @@ Los logs nunca incluyen headers, cuerpos ni tokens, y cualquier clave sensible (
 app/
 ├── main.py              # Aplicación FastAPI y handler que invoca Lambda
 ├── config.py            # Configuración de conexión a la base de datos
+├── migrar.py            # Handler de la Lambda de migraciones
 ├── errores.py           # Excepciones de dominio y forma única de errores
 ├── observabilidad.py    # request_id, middleware y logs JSON
 ├── contexto.py          # request_id del request en curso (contextvars)
@@ -179,6 +181,7 @@ app/
 infra/
 ├── versions.tf          # Versiones de Terraform y providers; estado remoto en S3
 ├── main.tf              # Prefijo común de nombres, zonas y ARNs del modelo de Bedrock
+├── migraciones.tf       # Lambda de migraciones, su rol y sus logs
 ├── variables.tf         # Variables generales del proyecto
 ├── network.tf           # VPC, subredes, security groups y VPC endpoints
 ├── rds.tf               # PostgreSQL, credenciales en Secrets Manager y su endpoint
@@ -290,6 +293,32 @@ alembic revision -m "descripcion del cambio"
 ```
 
 Genera un archivo en `migraciones/versions/`. Las migraciones se escriben a mano y cada una tiene que tener un `downgrade` que funcione: antes de abrir el PR, probar `alembic downgrade -1` y volver a subir.
+
+### Aplicar las migraciones en AWS
+
+RDS es privada, así que las migraciones las aplica la Lambda `malka-suite-dev-migraciones`, que usa la misma imagen que la API con otro handler (`app/migrar.py`) y corre dentro de la VPC.
+
+Una vez cargado el secret `LAMBDA_MIGRACIONES_NAME`, el deploy automático (`.github/workflows/deploy.yml`) la invoca con `upgrade` en cada merge a `main`, antes de actualizar la API. Si la migración falla, el deploy se frena. Ver `docs/adr/0005-deploy-con-oidc.md`.
+
+Para invocarla a mano, con AWS CLI desde bash:
+
+```bash
+# Aplicar todas las migraciones pendientes
+aws lambda invoke --profile malka --function-name malka-suite-dev-migraciones \
+  --cli-binary-format raw-in-base64-out --cli-read-timeout 320 \
+  --payload '{"accion": "upgrade", "revision": "head"}' respuesta.json
+cat respuesta.json
+
+# Deshacer la última migración
+aws lambda invoke --profile malka --function-name malka-suite-dev-migraciones \
+  --cli-binary-format raw-in-base64-out --cli-read-timeout 320 \
+  --payload '{"accion": "downgrade", "revision": "-1"}' respuesta.json
+cat respuesta.json
+```
+
+`respuesta.json` muestra la versión antes y después (`revision_anterior` y `revision_actual`). Los logs quedan en CloudWatch, en `/aws/lambda/malka-suite-dev-migraciones`. Un `downgrade` sin `revision` se rechaza a propósito.
+
+Las migraciones se aplican antes de actualizar la API, así que tienen que ser compatibles con la versión anterior del código: no borrar ni renombrar columnas que el código actual todavía usa.
 
 
 ## Despliegue
