@@ -1,12 +1,15 @@
-"""Diagrama de arquitectura de Malka Suite sobre AWS.
+"""Base regenerable del diagrama de arquitectura de Malka Suite sobre AWS.
 
-Lo genera la lib `diagrams` (iconos oficiales de AWS + Graphviz), con los
-nombres reales de los recursos de infra/. Regenerar con
-`python docs/diagramas/generar_arquitectura.py`.
+El diagrama OFICIAL para el README y la entrega es `arquitectura.png`
+(versión curada, verificada contra infra/). Este script genera
+`arquitectura_generada.png/pdf` con la lib `diagrams` (iconos oficiales de
+AWS + Graphviz) y sirve de base cuando la infra cambia y hay que redibujar:
 
-El diagrama se organiza en zonas: el pipeline de CI/CD a la izquierda, el
-flujo de la aplicación en el centro (dentro de la VPC), y los secretos y
-el almacenamiento a la derecha. El deploy paso a paso está en pipeline.png.
+    python docs/diagramas/generar_arquitectura.py
+
+Se organiza en zonas: el pipeline de CI/CD a la izquierda, el flujo de la
+aplicación en el centro (dentro de la VPC), y los secretos y el
+almacenamiento a la derecha. El deploy paso a paso está en pipeline.png.
 """
 
 from diagrams import Cluster, Diagram, Edge
@@ -40,7 +43,7 @@ SUAVE = Edge(color="#8a8a8a", style="dotted")
 
 with Diagram(
     "Malka Suite — arquitectura en AWS",
-    filename="docs/diagramas/arquitectura",
+    filename="docs/diagramas/arquitectura_generada",
     show=False,
     direction="TB",
     graph_attr=GRAFICO,
@@ -56,9 +59,9 @@ with Diagram(
     # ====================================================== ZONA APLICACIÓN ====
     navegador = Users("Navegador\nde los clientes")
     cognito = Cognito("Cognito\n(#20 planeado)")
-    apigw = APIGateway("API Gateway\nCORS · throttle")
+    apigw = APIGateway("API Gateway\nCORS · 20 rps / 50 burst")
 
-    with Cluster("VPC 10.20.0.0/16 — sin NAT (ADR 0002)"):
+    with Cluster("VPC 10.20.0.0/16 — sin NAT Gateway ni salida a internet (ADR 0002)"):
         with Cluster("Subredes privadas · 2 AZs"):
             api = Lambda("Lambda API\nFastAPI + Mangum")
             worker = Lambda("Lambda worker\nasync · batch 1")
@@ -81,7 +84,7 @@ with Diagram(
         rds = RDS("RDS PostgreSQL 16\nforce SSL · RLS (#19)")
         bucket = S3("S3 documentos\nversionado · SSE (#38)")
 
-    bedrock = Bedrock("Amazon Bedrock\nClaude Haiku 4.5 (#39)")
+    bedrock = Bedrock("Amazon Bedrock\nClaude Haiku 4.5 · temp 0 (#40)")
     logs = Cloudwatch("CloudWatch\n+ X-Ray")
 
     # --- zona CI/CD: del push a la imagen que corre todo ---
