@@ -28,28 +28,32 @@ Malka Suite unifica en un solo sistema:
 
 Es multi-tenant: cada criadero es un inquilino con sus datos aislados. Los usuarios son el dueño o administrador, el capataz de criadores y el equipo de administración y ventas.
 
-> En el Checkpoint 1 el backend tiene la infraestructura base y los endpoints de salud. Los módulos de negocio se construyen sobre esta base (ver [Estado del Checkpoint 1](#estado-del-checkpoint-1)).
+> En el Checkpoint 1 el backend quedó con la infraestructura base y los endpoints de salud; el Checkpoint 2 agrega CI/CD, migraciones, mensajería y los módulos de negocio (ver el [tablero del CP2](https://github.com/orgs/Reinas-Malka/projects/2)).
 
 ---
 
 ## Arquitectura
 
-![Arquitectura cloud de Malka Suite](docs/arquitectura.jpg)
+![Arquitectura de Malka Suite en AWS](docs/diagramas/arquitectura.png)
+
+Diagrama regenerable con `python docs/diagramas/generar_arquitectura.py` (lib `diagrams`, iconos oficiales de AWS). El deploy paso a paso está en `docs/diagramas/pipeline.png`. Resumen del flujo:
 
 ```mermaid
 flowchart TB
-    U["Usuario / navegador"] --> FE["Frontend React + Vite (Vercel)"]
-    FE -->|"HTTPS + CORS"| AGW["API Gateway HTTP<br/>w0kwb9belc"]
+    U["Navegador"] -->|"HTTPS"| AGW["API Gateway HTTP · CORS"]
     AGW --> L
-    subgraph VPC["VPC 10.20.0.0/16 — sin NAT Gateway"]
-        L["Lambda malka-suite-dev-api<br/>FastAPI + Mangum (imagen ECR)"]
-        VE1["VPC Endpoint (interface)<br/>Secrets Manager"]
-        VE2["VPC Endpoint (gateway)<br/>S3"]
-        DB["RDS PostgreSQL 16<br/>malka-suite-dev-db (privada)"]
-        L --> VE1
-        L --> VE2
-        L --> DB
+    U -->|"binario por URL prefirmada"| S3D["S3 documentos"]
+    subgraph VPC["VPC 10.20.0.0/16 — sin NAT · endpoints: S3, Secrets, SQS, bedrock"]
+        L["Lambda api · FastAPI"]
+        W["Lambda worker"]
+        M["Lambda migraciones"]
+        L -->|"encola"| SQS["SQS documentos/ingesta"]
+        SQS -->|"3 fallos"| DLQ["DLQ + alarma"]
+        SQS --> W
+        W --> DB[("RDS PostgreSQL 16 · RLS")]
+        W -->|"converse"| BR["Bedrock Haiku 4.5"]
     end
+    GH["GitHub Actions · OIDC"] --> ECR["ECR"] -.-> L & W & M
 ```
 
 Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr) y [`AI-DECISIONS.md`](AI-DECISIONS.md).
@@ -69,16 +73,20 @@ Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr
 |---|---|---|
 | API Gateway HTTP | `w0kwb9belc` | Entrada pública, ruteo y respuesta del preflight CORS |
 | Lambda | `malka-suite-dev-api` | Ejecuta FastAPI a partir de una imagen de contenedor |
-| ECR | `malka-suite-dev-backend` | Registro de la imagen, con lifecycle policy |
+| Lambda | `malka-suite-dev-worker` | Consume las colas SQS (borrador con IA e ingesta) |
+| Lambda | `malka-suite-dev-migraciones` | Aplica las migraciones de Alembic dentro de la VPC |
+| ECR | `malka-suite-dev-backend` | Registro de la imagen (única para las tres Lambdas), con lifecycle policy |
 | VPC | `vpc-0499544bc014ded68` | Aislamiento de red (10.20.0.0/16) |
 | Subredes privadas | `subnet-0f13096…` (1a), `subnet-0018ca9…` (1b) | Dos AZ, requisito del subnet group de RDS |
 | Security Groups | lambda `sg-051b948…`, rds `sg-0d2447c…`, endpoints `sg-0865159…` | Acceso a la base solo desde el SG de la Lambda |
-| VPC Endpoints | S3 (gateway) `vpce-0b20ead…`, Secrets Manager (interface) `vpce-0b7d2f4…` | Salida a AWS sin NAT |
+| VPC Endpoints | S3 (gateway), Secrets Manager, SQS y bedrock-runtime (interface, 1 AZ) | Salida a AWS sin NAT |
+| SQS | colas `documentos` e `ingesta` + sus DLQs | Mensajería asincrónica; 3 fallos → DLQ y alarma |
+| S3 | `malka-suite-dev-documentos-…` | Documentos e ingesta por URLs prefirmadas (versionado, SSE) |
 | RDS PostgreSQL 16 | `malka-suite-dev-db` (db.t4g.micro) | Base de datos, privada y solo TLS |
 | Secrets Manager | `malka-suite-dev/db/owner` | Credenciales de la base |
-| CloudWatch Logs | `/aws/lambda/malka-suite-dev-api` | Logs de la API |
+| IAM + OIDC | proveedor OIDC de GitHub + rol `malka-suite-dev-github-actions` | Deploy por OIDC, sin claves (ADR 0005) |
+| CloudWatch | 3 grupos de logs (14 días), 2 alarmas de DLQ, X-Ray | Observabilidad |
 | S3 | `malka-suite-tfstate-961868442562` | Estado remoto de Terraform |
-| Lambda | `malka-suite-dev-migraciones` | Aplica las migraciones de Alembic dentro de la VPC |
 
 ### Costos
 
@@ -96,7 +104,7 @@ El costo fijo son los **VPC endpoints de interface: ~7,30 USD/mes cada uno**. Ho
 | Logs del worker | CloudWatch `/aws/lambda/malka-suite-dev-worker` | Retención de 14 días, mismo criterio que la API |
 | Trazas | AWS X-Ray | Tracing activo en la Lambda |
 | Logs de la base | CloudWatch, exportados desde RDS | Incluye toda consulta que tarde más de 500 ms |
-| Prueba de vida | `GET /health` | Usada por el monitoreo y el smoke test |
+| Prueba de vida | `GET /health` | Liveness; el smoke test del deploy usa `/health/ready` |
 | Límite de tráfico | API Gateway | 20 requests por segundo, ráfagas de hasta 50 |
 | Log de acceso | CloudWatch, una línea JSON por request | `request_id`, `tenant_id`, `user_id`, `method`, `route`, `status`, `latency_ms` (ver [Errores y request_id](#errores-y-request_id)) |
 
@@ -189,13 +197,13 @@ infra/
 ├── compute.tf           # Lambda de API, rol IAM y grupo de logs
 ├── api.tf               # API Gateway: rutas, CORS y límites de tráfico
 ├── sqs.tf               # Colas con DLQ, Lambda worker y alarmas de DLQ
+├── s3_documentos.tf     # Bucket de documentos con URLs prefirmadas
 ├── oidc.tf              # Proveedor OIDC de GitHub y rol de deploy
 ├── outputs.tf           # Valores que se consultan después del apply
 └── backend.hcl.example  # Plantilla del backend de estado
 docs/
 ├── adr/                 # Decisiones de arquitectura
-├── arquitectura.jpg     # Diagrama cloud
-└── arquitectura.pdf
+└── diagramas/           # Arquitectura y pipeline (regenerables con Python)
 tests/                   # Pruebas automatizadas
 migraciones/             # Migraciones de Alembic (versions/ tiene una por cambio)
 alembic.ini              # Configuración de Alembic
