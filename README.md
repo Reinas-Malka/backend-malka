@@ -92,7 +92,7 @@ Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr
 
 El proyecto vive dentro del **plan gratuito nuevo de AWS**, con dos consecuencias que condicionaron el diseño: la retención de backups de RDS está limitada a 1 día y no se permite el autoscaling de almacenamiento.
 
-El costo fijo son los **VPC endpoints de interface: ~7,30 USD/mes cada uno**. Hoy Secrets Manager, más SQS y bedrock-runtime desde el worker del #37 (~22 USD/mes en total). Es el precio de no tener un NAT Gateway, que costaría unas cinco veces más. Lambda, API Gateway, RDS `db.t4g.micro` y ECR se mantienen dentro de los límites gratuitos para el volumen de este TP.
+El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 USD/hora por cada endpoint-AZ (~7,30 USD/mes cada uno)**, más 0,01 USD/GB procesado. Por eso cada endpoint vive en **una sola subred** (en dos AZs el costo se duplica) y el de bedrock-runtime queda **apagado hasta que el worker haga llamadas reales (#40)**. Hoy: Secrets Manager + SQS = **~14,60 USD/mes** (al prender Bedrock: ~21,90). Es el precio de no tener un NAT Gateway, que costaría unas cinco veces más. Lambda, API Gateway, RDS `db.t4g.micro` y ECR se mantienen dentro de los límites gratuitos para el volumen de este TP. Hay un presupuesto mensual con alerta por email (`presupuesto_mensual_usd` + `email_alertas`).
 
 ---
 
@@ -426,7 +426,9 @@ terraform apply
 | `vpc_cidr` | Rango de direcciones de la VPC |
 | `image_tag` | Etiqueta de la imagen de ECR que ejecuta la Lambda |
 | `origenes_permitidos` | Orígenes habilitados para CORS |
-| `habilitar_endpoints_interfaz` | Crea los VPC endpoints de SQS y bedrock-runtime (prendidos desde el #37: el worker corre en la VPC y no tiene NAT) |
+| `habilitar_endpoint_sqs` | VPC endpoint de SQS: lo usa la API para enviar mensajes (~7,30 USD/mes; se cobra por AZ) |
+| `habilitar_endpoint_bedrock` | VPC endpoint de bedrock-runtime: apagado hasta que el worker llame a Bedrock (#40) |
+| `presupuesto_mensual_usd` / `email_alertas` | Tope y email de la alerta de AWS Budgets (con email vacío no se crea) |
 | `habilitar_endpoint_secretos` | Crea el VPC endpoint de Secrets Manager |
 | `db_clase_instancia` | Clase de la instancia de RDS |
 
@@ -525,6 +527,6 @@ El motivo de tener dos repositorios está documentado en [`docs/adr/0004-dos-rep
 
 ## Costo fijo de infraestructura
 
-- Cada VPC endpoint de interface: ~7,30 USD/mes.
-- Hoy solo Secrets Manager. Con SQS + bedrock-runtime pasa a ~22 USD/mes.
+- Cada endpoint de interface se cobra **por AZ**: ~7,30 USD/mes por endpoint-AZ (+0,01 USD/GB).
+- En una sola subred: Secrets Manager + SQS = ~14,60 USD/mes. Al prender bedrock-runtime (#40): ~21,90.
 - El endpoint de S3 es gateway: sin costo fijo.
