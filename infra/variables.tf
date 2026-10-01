@@ -22,10 +22,28 @@ variable "vpc_cidr" {
   default     = "10.20.0.0/16"
 }
 
-variable "habilitar_endpoints_interfaz" {
-  description = "Crea los VPC endpoints de tipo interfaz (SQS y bedrock-runtime). Tienen costo por hora (~14,60 USD/mes entre los dos); se prenden con el worker del #37, que corre en la VPC y no tiene NAT"
+variable "habilitar_endpoint_sqs" {
+  description = "VPC endpoint de interface de SQS: lo usa la API para enviar mensajes (~7,30 USD/mes; se cobra por AZ)"
   type        = bool
   default     = true
+}
+
+variable "habilitar_endpoint_bedrock" {
+  description = "VPC endpoint de interface de bedrock-runtime (~7,30 USD/mes). Apagado hasta que el worker haga llamadas reales a Bedrock (#40)"
+  type        = bool
+  default     = false
+}
+
+variable "presupuesto_mensual_usd" {
+  description = "Tope del presupuesto mensual de AWS para la alarma de AWS Budgets"
+  type        = number
+  default     = 15
+}
+
+variable "email_alertas" {
+  description = "Email que recibe las alertas de presupuesto y (a futuro) de las alarmas de DLQ. Vacio = no se crea el presupuesto"
+  type        = string
+  default     = ""
 }
 
 variable "image_tag" {

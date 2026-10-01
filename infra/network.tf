@@ -122,19 +122,30 @@ resource "aws_vpc_endpoint" "s3" {
   }
 }
 
-# Los de interfaz si cuestan (unos 7 USD por mes cada uno), asi que quedan
-# apagados hasta que exista el worker que usa SQS y Bedrock.
+# Los endpoints de interfaz se cobran POR AZ: ~0,01 USD/hora por cada
+# endpoint-AZ (~7,30 USD/mes cada uno), mas 0,01 USD/GB procesado. Por eso
+# van en una sola subred, igual que el de Secrets Manager: en 2 AZs el costo
+# se duplica y para este ambiente la resiliencia multi-AZ no justifica el
+# doble.
+#
+# El de bedrock-runtime ademas queda apagado hasta que el worker haga su
+# primera llamada real (#40): hoy nadie lo usa. El de SQS si: lo necesita
+# la API para SendMessage (el polling del event source mapping corre en la
+# infraestructura de Lambda, fuera de esta VPC).
 locals {
-  servicios_endpoint_interfaz = var.habilitar_endpoints_interfaz ? toset(["sqs", "bedrock-runtime"]) : toset([])
+  endpoints_interfaz = concat(
+    var.habilitar_endpoint_sqs ? ["sqs"] : [],
+    var.habilitar_endpoint_bedrock ? ["bedrock-runtime"] : [],
+  )
 }
 
 resource "aws_vpc_endpoint" "interfaz" {
-  for_each = local.servicios_endpoint_interfaz
+  for_each = toset(local.endpoints_interfaz)
 
   vpc_id              = aws_vpc.principal.id
   service_name        = "com.amazonaws.${var.region}.${each.key}"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.privada[*].id
+  subnet_ids          = [aws_subnet.privada[0].id]
   security_group_ids  = [aws_security_group.endpoints.id]
   private_dns_enabled = true
 
