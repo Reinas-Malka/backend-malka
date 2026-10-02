@@ -18,6 +18,8 @@ Reglas de calculo:
 - En moneda extranjera, el total en pesos es el total por el tipo de cambio,
   redondeado a centavos. De donde sale la cotizacion lo decide quien llama.
 - Todo importe devuelto tiene exactamente dos decimales.
+- En exportacion no se cobra IVA: todas las lineas se calculan al 0%,
+  sin importar la alicuota que traigan.
 """
 
 from __future__ import annotations
@@ -85,6 +87,7 @@ class Importes:
     total: Decimal
     moneda: str
     tipo_cambio: Decimal | None
+    exportacion: bool
     total_en_pesos: Decimal
 
 
@@ -93,19 +96,31 @@ def redondear(valor: Decimal) -> Decimal:
     return valor.quantize(CENTAVOS, rounding=REDONDEO)
 
 
-def calcular_importes(lineas: Sequence[Linea]) -> Importes:
-    """Calcula el neto de cada linea, el IVA por alicuota y el total en pesos.
+def calcular_importes(
+    lineas: Sequence[Linea],
+    *,
+    exportacion: bool = False,
+    moneda: str = MONEDA_LOCAL,
+    tipo_cambio: Decimal | None = None,
+) -> Importes:
+    """Calcula el neto de cada linea, el IVA por alicuota y el total.
 
     El neto de cada linea se redondea a centavos y el IVA se calcula una sola
     vez por alicuota, sobre la suma de sus netos (ver el docstring del modulo).
+    En exportacion todas las lineas van al 0%. Si la moneda no es la local,
+    el tipo de cambio es obligatorio.
     """
+    _validar_tipo_de_cambio(moneda, tipo_cambio)
+
     lineas_neto: list[Decimal] = []
     neto_por_alicuota: dict[Alicuota, Decimal] = {}
     for linea in lineas:
         neto_linea = redondear(linea.precio_unitario * linea.cantidad)
         lineas_neto.append(neto_linea)
-        acumulado = neto_por_alicuota.get(linea.alicuota, Decimal("0"))
-        neto_por_alicuota[linea.alicuota] = acumulado + neto_linea
+        # En exportacion no se cobra IVA, venga la alicuota que venga.
+        alicuota = Alicuota.IVA_0 if exportacion else linea.alicuota
+        acumulado = neto_por_alicuota.get(alicuota, Decimal("0"))
+        neto_por_alicuota[alicuota] = acumulado + neto_linea
 
     # De menor a mayor alicuota, como el cuadro de IVA de la factura.
     por_alicuota = tuple(
@@ -122,13 +137,27 @@ def calcular_importes(lineas: Sequence[Linea]) -> Importes:
     neto = redondear(sum((s.neto for s in por_alicuota), Decimal("0")))
     iva = redondear(sum((s.iva for s in por_alicuota), Decimal("0")))
     total = neto + iva
+    total_en_pesos = total if tipo_cambio is None else redondear(total * tipo_cambio)
     return Importes(
         lineas_neto=tuple(lineas_neto),
         por_alicuota=por_alicuota,
         neto=neto,
         iva=iva,
         total=total,
-        moneda=MONEDA_LOCAL,
-        tipo_cambio=None,
-        total_en_pesos=total,
+        moneda=moneda,
+        tipo_cambio=tipo_cambio,
+        exportacion=exportacion,
+        total_en_pesos=total_en_pesos,
     )
+
+
+def _validar_tipo_de_cambio(moneda: str, tipo_cambio: Decimal | None) -> None:
+    """En pesos no hay tipo de cambio; en otra moneda es obligatorio y positivo."""
+    if moneda == MONEDA_LOCAL:
+        if tipo_cambio is not None:
+            raise ImporteInvalido("Un documento en pesos no lleva tipo de cambio.")
+        return
+    if tipo_cambio is None:
+        raise ImporteInvalido(f"Falta el tipo de cambio para facturar en {moneda}.")
+    if tipo_cambio <= 0:
+        raise ImporteInvalido("El tipo de cambio tiene que ser mayor que cero.")

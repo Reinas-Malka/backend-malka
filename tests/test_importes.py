@@ -8,6 +8,7 @@ import pytest
 
 from app.services.documentos.importes import (
     Alicuota,
+    ImporteInvalido,
     Linea,
     SubtotalAlicuota,
     calcular_importes,
@@ -39,6 +40,7 @@ def test_una_linea_al_21() -> None:
     assert r.total == Decimal("4481.45")
     assert r.moneda == "ARS"
     assert r.tipo_cambio is None
+    assert r.exportacion is False
     assert r.total_en_pesos == r.total
 
 
@@ -96,3 +98,54 @@ def test_los_importes_salen_siempre_con_dos_decimales() -> None:
     assert str(r.neto) == "500.00"
     assert str(r.iva) == "0.00"
     assert str(r.total) == "500.00"
+
+
+def test_exportacion_no_cobra_iva_aunque_la_linea_traiga_alicuota() -> None:
+    # 20 x 45.00 USD = 900.00, sin IVA aunque la linea diga 21%
+    # En pesos: 900.00 x 1250.50 = 1125450.00
+    r = calcular_importes(
+        [Linea(20, Decimal("45.00"), Alicuota.IVA_21)],
+        exportacion=True,
+        moneda="USD",
+        tipo_cambio=Decimal("1250.50"),
+    )
+
+    assert r.por_alicuota == (
+        SubtotalAlicuota(Alicuota.IVA_0, Decimal("900.00"), Decimal("0.00")),
+    )
+    assert r.iva == Decimal("0.00")
+    assert r.total == Decimal("900.00")
+    assert r.moneda == "USD"
+    assert r.exportacion is True
+    assert r.total_en_pesos == Decimal("1125450.00")
+
+
+def test_el_total_en_pesos_se_redondea() -> None:
+    # 3 x 33.33 = 99.99 USD | 99.99 x 1234.567 = 123444.35433 -> 123444.35
+    r = calcular_importes(
+        [Linea(3, Decimal("33.33"), Alicuota.IVA_0)],
+        exportacion=True,
+        moneda="USD",
+        tipo_cambio=Decimal("1234.567"),
+    )
+
+    assert r.total == Decimal("99.99")
+    assert str(r.total_en_pesos) == "123444.35"
+
+
+@pytest.mark.parametrize(
+    ("moneda", "tipo_cambio"),
+    [
+        ("USD", None),  # moneda extranjera sin cotizacion
+        ("USD", Decimal("0")),
+        ("USD", Decimal("-1")),
+        ("ARS", Decimal("1000")),  # en pesos no se informa tipo de cambio
+    ],
+)
+def test_tipo_de_cambio_invalido(moneda: str, tipo_cambio: Decimal | None) -> None:
+    with pytest.raises(ImporteInvalido):
+        calcular_importes(
+            [Linea(1, Decimal("10.00"), Alicuota.IVA_0)],
+            moneda=moneda,
+            tipo_cambio=tipo_cambio,
+        )
