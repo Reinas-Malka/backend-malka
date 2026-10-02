@@ -28,6 +28,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
+from typing import Any
 
 CENTAVOS = Decimal("0.01")
 REDONDEO = ROUND_HALF_UP
@@ -105,6 +106,32 @@ class Importes:
     tipo_cambio: Decimal | None
     exportacion: bool
     total_en_pesos: Decimal
+
+    def como_dict(self) -> dict[str, Any]:
+        """Los importes listos para guardar como JSON (snapshot del #42).
+
+        Los Decimal se pasan a texto y no a float: "4481.45" se lee igual en
+        cualquier lado, mientras que un float volveria a meter el error de
+        representacion que este modulo evita.
+        """
+        return {
+            "lineas_neto": [str(neto) for neto in self.lineas_neto],
+            "por_alicuota": [
+                {
+                    "alicuota": str(s.alicuota.value),
+                    "neto": str(s.neto),
+                    "iva": str(s.iva),
+                }
+                for s in self.por_alicuota
+            ],
+            "neto": str(self.neto),
+            "iva": str(self.iva),
+            "total": str(self.total),
+            "moneda": self.moneda,
+            "tipo_cambio": None if self.tipo_cambio is None else str(self.tipo_cambio),
+            "exportacion": self.exportacion,
+            "total_en_pesos": str(self.total_en_pesos),
+        }
 
 
 def redondear(valor: Decimal) -> Decimal:

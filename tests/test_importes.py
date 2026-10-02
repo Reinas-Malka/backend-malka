@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from typing import Any
 
@@ -181,3 +182,56 @@ def test_precio_cero_es_valido() -> None:
     r = calcular_importes([Linea(2, Decimal("0"), Alicuota.IVA_21)])
 
     assert str(r.total) == "0.00"
+
+
+def test_como_dict_nacional_con_dos_alicuotas() -> None:
+    r = calcular_importes(
+        [
+            Linea(2, Decimal("2500.00"), Alicuota.IVA_21),
+            Linea(10, Decimal("15000.00"), Alicuota.IVA_10_5),
+        ]
+    )
+
+    assert r.como_dict() == {
+        "lineas_neto": ["5000.00", "150000.00"],
+        "por_alicuota": [
+            {"alicuota": "0.105", "neto": "150000.00", "iva": "15750.00"},
+            {"alicuota": "0.21", "neto": "5000.00", "iva": "1050.00"},
+        ],
+        "neto": "155000.00",
+        "iva": "16800.00",
+        "total": "171800.00",
+        "moneda": "ARS",
+        "tipo_cambio": None,
+        "exportacion": False,
+        "total_en_pesos": "171800.00",
+    }
+
+
+def test_como_dict_exportacion() -> None:
+    r = calcular_importes(
+        [Linea(20, Decimal("45.00"), Alicuota.IVA_21)],
+        exportacion=True,
+        moneda="USD",
+        tipo_cambio=Decimal("1250.50"),
+    )
+
+    d = r.como_dict()
+
+    assert d["por_alicuota"] == [{"alicuota": "0", "neto": "900.00", "iva": "0.00"}]
+    assert d["tipo_cambio"] == "1250.50"
+    assert d["exportacion"] is True
+    assert d["total_en_pesos"] == "1125450.00"
+
+
+def test_como_dict_sobrevive_a_json_sin_floats() -> None:
+    # Ida y vuelta por JSON, como cuando se guarda en snapshot_json.
+    r = calcular_importes([Linea(3, Decimal("1234.56"), Alicuota.IVA_21)])
+
+    texto = json.dumps(r.como_dict())
+    leido = json.loads(texto)
+
+    assert leido == r.como_dict()
+    assert '"total": "4481.45"' in texto  # entre comillas: texto, no numero
+    assert Decimal(leido["total"]) == r.total
+    assert Alicuota(Decimal(leido["por_alicuota"][0]["alicuota"])) is Alicuota.IVA_21
