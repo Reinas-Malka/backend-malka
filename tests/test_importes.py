@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -149,3 +150,34 @@ def test_tipo_de_cambio_invalido(moneda: str, tipo_cambio: Decimal | None) -> No
             moneda=moneda,
             tipo_cambio=tipo_cambio,
         )
+
+
+def test_un_documento_sin_lineas_es_invalido() -> None:
+    with pytest.raises(ImporteInvalido):
+        calcular_importes([])
+
+
+@pytest.mark.parametrize(
+    ("cantidad", "precio_unitario", "alicuota"),
+    [
+        (0, Decimal("10.00"), Alicuota.IVA_21),  # cantidad cero
+        (-1, Decimal("10.00"), Alicuota.IVA_21),  # cantidad negativa
+        (1.5, Decimal("10.00"), Alicuota.IVA_21),  # cantidad no entera
+        (True, Decimal("10.00"), Alicuota.IVA_21),  # bool es int en Python
+        (1, Decimal("-0.01"), Alicuota.IVA_21),  # precio negativo
+        (1, 10.0, Alicuota.IVA_21),  # float en lugar de Decimal
+        (1, Decimal("NaN"), Alicuota.IVA_21),  # no es un numero
+        (1, Decimal("Infinity"), Alicuota.IVA_21),
+        (1, Decimal("10.00"), Decimal("0.21")),  # alicuota fuera del enum
+    ],
+)
+def test_linea_invalida(cantidad: Any, precio_unitario: Any, alicuota: Any) -> None:
+    with pytest.raises(ImporteInvalido):
+        Linea(cantidad, precio_unitario, alicuota)
+
+
+def test_precio_cero_es_valido() -> None:
+    # Una bonificacion o una muestra sin cargo: neto 0.00, no es un error.
+    r = calcular_importes([Linea(2, Decimal("0"), Alicuota.IVA_21)])
+
+    assert str(r.total) == "0.00"

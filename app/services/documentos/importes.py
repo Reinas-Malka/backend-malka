@@ -66,6 +66,22 @@ class Linea:
     alicuota: Alicuota
     descripcion: str = ""
 
+    def __post_init__(self) -> None:
+        """Una linea invalida no llega a existir: se rechaza al crearla."""
+        if isinstance(self.cantidad, bool) or not isinstance(self.cantidad, int):
+            raise ImporteInvalido("La cantidad tiene que ser un numero entero.")
+        if self.cantidad <= 0:
+            raise ImporteInvalido("La cantidad tiene que ser mayor que cero.")
+        if not isinstance(self.precio_unitario, Decimal):
+            # Un float ya trae el error de representacion: se exige Decimal.
+            raise ImporteInvalido("El precio unitario tiene que ser un Decimal.")
+        if not self.precio_unitario.is_finite():
+            raise ImporteInvalido("El precio unitario tiene que ser un numero.")
+        if self.precio_unitario < 0:
+            raise ImporteInvalido("El precio unitario no puede ser negativo.")
+        if not isinstance(self.alicuota, Alicuota):
+            raise ImporteInvalido("La alicuota tiene que ser una de Alicuota.")
+
 
 @dataclass(frozen=True)
 class SubtotalAlicuota:
@@ -110,6 +126,10 @@ def calcular_importes(
     En exportacion todas las lineas van al 0%. Si la moneda no es la local,
     el tipo de cambio es obligatorio.
     """
+
+    if not lineas:
+        raise ImporteInvalido("El documento tiene que tener al menos una linea.")
+
     _validar_tipo_de_cambio(moneda, tipo_cambio)
 
     lineas_neto: list[Decimal] = []
