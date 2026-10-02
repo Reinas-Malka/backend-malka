@@ -22,6 +22,7 @@ Reglas de calculo:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
@@ -90,3 +91,44 @@ class Importes:
 def redondear(valor: Decimal) -> Decimal:
     """Redondea un valor a dos decimales con ROUND_HALF_UP."""
     return valor.quantize(CENTAVOS, rounding=REDONDEO)
+
+
+def calcular_importes(lineas: Sequence[Linea]) -> Importes:
+    """Calcula el neto de cada linea, el IVA por alicuota y el total en pesos.
+
+    El neto de cada linea se redondea a centavos y el IVA se calcula una sola
+    vez por alicuota, sobre la suma de sus netos (ver el docstring del modulo).
+    """
+    lineas_neto: list[Decimal] = []
+    neto_por_alicuota: dict[Alicuota, Decimal] = {}
+    for linea in lineas:
+        neto_linea = redondear(linea.precio_unitario * linea.cantidad)
+        lineas_neto.append(neto_linea)
+        acumulado = neto_por_alicuota.get(linea.alicuota, Decimal("0"))
+        neto_por_alicuota[linea.alicuota] = acumulado + neto_linea
+
+    # De menor a mayor alicuota, como el cuadro de IVA de la factura.
+    por_alicuota = tuple(
+        SubtotalAlicuota(
+            alicuota=alicuota,
+            neto=neto_alicuota,
+            iva=redondear(neto_alicuota * alicuota.value),
+        )
+        for alicuota, neto_alicuota in sorted(
+            neto_por_alicuota.items(), key=lambda par: par[0].value
+        )
+    )
+
+    neto = redondear(sum((s.neto for s in por_alicuota), Decimal("0")))
+    iva = redondear(sum((s.iva for s in por_alicuota), Decimal("0")))
+    total = neto + iva
+    return Importes(
+        lineas_neto=tuple(lineas_neto),
+        por_alicuota=por_alicuota,
+        neto=neto,
+        iva=iva,
+        total=total,
+        moneda=MONEDA_LOCAL,
+        tipo_cambio=None,
+        total_en_pesos=total,
+    )
