@@ -59,9 +59,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "documentos" {
   }
 }
 
-# TODO(#38): la retencion de documentos y fotos de ingesta es una de las
-# definiciones pendientes con el cliente. Hasta tenerla, no se expira nada:
-# solo se limpian las subidas multiparte que quedaron a medias.
+# Retencion confirmada por la clienta (#70, docs/dominio.md): cada plazo es
+# una linea. Ademas de estas reglas, se limpian las subidas multiparte que
+# quedaron a medias.
 resource "aws_s3_bucket_lifecycle_configuration" "documentos" {
   bucket = aws_s3_bucket.documentos.id
 
@@ -73,6 +73,66 @@ resource "aws_s3_bucket_lifecycle_configuration" "documentos" {
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
+    }
+  }
+
+  # Comprobantes: 5 anos por prescripcion fiscal (Ley 11.683 art. 56),
+  # con pasaje a GLACIER_IR a los 90 dias para abaratar el almacenamiento.
+  rule {
+    id     = "documentos-comprobantes"
+    status = "Enabled"
+
+    filter {
+      prefix = "documentos/"
+    }
+
+    transition {
+      days          = 90
+      storage_class = "GLACIER_IR"
+    }
+
+    expiration {
+      days = 1825
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
+  # Ingesta: carpeta temporal de subida, 30 dias.
+  rule {
+    id     = "ingesta-temporal"
+    status = "Enabled"
+
+    filter {
+      prefix = "ingesta/"
+    }
+
+    expiration {
+      days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
+  # Evidencia fotografica de cria (prefijo de fase 1): 365 dias.
+  rule {
+    id     = "evidencia-de-cria"
+    status = "Enabled"
+
+    filter {
+      prefix = "evidencia/"
+    }
+
+    expiration {
+      days = 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
     }
   }
 }
