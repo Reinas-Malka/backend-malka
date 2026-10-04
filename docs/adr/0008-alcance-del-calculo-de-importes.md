@@ -27,7 +27,8 @@ derogar el 0006 entero sino acotar su alcance: son **dos entidades**.
 (`prompts/borrador_v1.txt` se mantiene) y #40 sigue rechazando salidas del
 modelo con `total`/`iva`/`tipo_cambio`.
 
-**`comprobante` (externo — Factura E de ARCA).** `punto_venta`, `numero`,
+**`comprobante` (externo — Factura A/B/E de ARCA; la letra la asigna ARCA
+según la condición fiscal del cliente).** `punto_venta`, `numero`,
 `moneda`, `importe`, `tipo_cambio` y CAE son **datos de entrada transcriptos
 del comprobante e inmutables**. Nunca calculados, generados ni recalculados.
 Flujo: se emite en ARCA → se sube el PDF → el sistema registra la metadata.

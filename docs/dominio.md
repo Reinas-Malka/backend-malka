@@ -16,9 +16,20 @@ recalcula retroactivamente.
 
 ## Facturación
 
-- Único formato: **Factura E** (exportación), electrónica, generada en el
-  portal de ARCA con clave fiscal. **El número lo asigna ARCA** al generar el
-  comprobante.
+La cabaña vende **en Argentina y al exterior**. Tres tipos de comprobante,
+según la condición fiscal del CLIENTE:
+
+- **Factura A** → cliente responsable inscripto (IVA discriminado)
+- **Factura B** → monotributo, exento o consumidor final (IVA incluido)
+- **Factura E** → exportación (electrónica, portal de ARCA con clave fiscal)
+
+- **La letra la asigna ARCA al emitir, igual que el número**: se
+  TRANSCRIBE, no se elige. Nunca un valor calculado ni generado.
+- La condición del cliente sirve para (a) validar que la letra transcripta
+  es coherente y (b) calcular el pedido interno (ADR 0008). Derivación
+  esperada: exterior → E, responsable inscripto → A, resto → B.
+- Moneda: **ARS** en ventas nacionales; **USD o EUR** en exportación.
+  `tipo_cambio` es NULL cuando la moneda es ARS.
 - Facturan dos personas de la cabaña bajo **un solo CUIT** → no hay tabla de
   emisores; el CUIT es atributo del tenant.
 - `punto_venta` y `numero` se transcriben del comprobante.
@@ -56,16 +67,24 @@ Modelarlo con una sola fecha ancla es el error a evitar.
 introducción de la celda al núcleo (antes de nacer) · D11 nacimiento.
 
 **Eje B — fecundación** (ancla: introducción de la celda, I0): I0+1
-nacimiento · nac+4 a 5 madurez sexual · nac+10 fecundada **o extravíada** ·
+nacimiento · nac+4 a 5 madurez sexual · nac+10 fecundada **o extraviada** ·
 I0+16 enjaulado, lista para despacho (≈ D26).
 
 Estados de la celda/reina individual (no de la tanda):
 
+    trasladada → (descartada)
     trasladada → introducida → nacida → madura → (fecundada | extraviada)
                → enjaulada → despachada
 
-"Extraviada" es una **pérdida con causa propia** (no volvió del vuelo
-nupcial). No modelarla como `fecundada = false`.
+Dos estados terminales de **pérdida**, con causas distintas:
+
+- `descartada`: la cúpula nunca se introdujo al núcleo (no operculó, se
+  perdió antes). Su motivo es **cerrar la fila**, NO medir aceptación: sin
+  reportes encima, igual que `celdas_operculadas`.
+- `extraviada`: la reina nació, salió al vuelo nupcial y no volvió. No
+  modelarla como `fecundada = false`.
+
+Los KPIs no cambian: el denominador sigue siendo **celdas introducidas**.
 
 **KPIs:**
 
@@ -111,8 +130,9 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
     tenant:              nombre, cuit
     emisor:              NO EXISTE (un solo CUIT)
 
-    comprobante:         tenant_id, punto_venta, numero, fecha_emision,
-                         moneda, importe, tipo_cambio, archivo_s3_key, cargado_por
+    comprobante:         tenant_id, tipo (A|B|E), cliente_id, punto_venta,
+                         numero, fecha_emision, moneda, importe,
+                         tipo_cambio (NULL si ARS), archivo_s3_key, cargado_por
                          UNIQUE (tenant_id, punto_venta, numero)
 
     embarque:            tenant_id, destino_pais, fecha_vuelo, awb, estado
