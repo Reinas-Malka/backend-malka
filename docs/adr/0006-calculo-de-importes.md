@@ -1,6 +1,9 @@
 # ADR 0006 — Cálculo de importes con Decimal, redondeo HALF_UP e IVA por alícuota
 
 - **Estado:** aceptada
+- **Amendada por:** [ADR 0008](0008-alcance-del-calculo-de-importes.md) — el
+  cálculo aplica al **pedido interno**; los datos del comprobante fiscal se
+  transcriben y no se numeran desde el sistema.
 - **Fecha:** 2026-10-02
 - **Decisores:** equipo Reinas Malka
 - **Issues:** #41 (lo usan #34 y #42)
