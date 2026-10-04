@@ -133,7 +133,7 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
     comprobante:         tenant_id, tipo (A|B|E), cliente_id, punto_venta,
                          numero, fecha_emision, moneda, importe,
                          tipo_cambio (NULL si ARS), archivo_s3_key, cargado_por
-                         UNIQUE (tenant_id, punto_venta, numero)
+                         UNIQUE (tenant_id, tipo, punto_venta, numero)
 
     embarque:            tenant_id, destino_pais, fecha_vuelo, awb, estado
     documento_embarque:  embarque_id, tipo (enum de 6), numero,
@@ -160,3 +160,13 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
 - La **alícuota de IVA vive en el catálogo de ítems vendibles** (enum de
   `importes.py`), no en el cliente. Valor para reinas: pendiente de la
   clienta (21% o 10,5%); configurable, sin valor asumido.
+- **`punto_venta` y `numero` son DOS enteros separados**, nunca el string
+  impreso concatenado: `0001-00000045` es la REPRESENTACIÓN IMPRESA. El
+  padding (4-5 y 8 dígitos) se arma al mostrar. Guardar el string
+  concatenado vuelve el UNIQUE redundante y la transcripción inconsistente
+  según quién cargue.
+- **El UNIQUE espeja la clave natural de ARCA** — (CUIT emisor, tipo, punto
+  de venta, número): la terna con la que se pide el CAE. El CUIT es
+  atributo del tenant. Un sistema que transcribe no puede ser más estricto
+  que el sistema que emite; el UNIQUE con `tipo` es seguro tanto con un
+  punto de venta para todas las letras como con puntos separados por tipo.
