@@ -125,3 +125,18 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          fecha_nacimiento, fecha_fecundacion, fecha_enjaulado
                          → los % se calculan a nivel celda y se agregan por
                            tanda y por madre sin duplicar lógica
+
+### Notas al modelo (decisiones del 05/10)
+
+- **`celdas_trasladadas` no es columna**: es `COUNT(*)` de celdas de la tanda.
+  Una fila de `celda` por cada cúpula traslarvada, estado inicial
+  `trasladada` (decenas por tanda). Persistir el conteo es el mismo error
+  que `porcentaje_fecundacion`.
+- `celda.nucleo_id` es **NULLABLE**: la celda recién traslarvada no tiene
+  núcleo; se introduce recién alrededor del día 10.
+- **Jerarquía banco → núcleo** (viene del brief original, no de las
+  confirmaciones): `nucleo.banco_id NOT NULL`; `banco.capacidad_max` se
+  mide en núcleos por banco.
+- La **alícuota de IVA vive en el catálogo de ítems vendibles** (enum de
+  `importes.py`), no en el cliente. Valor para reinas: pendiente de la
+  clienta (21% o 10,5%); configurable, sin valor asumido.
