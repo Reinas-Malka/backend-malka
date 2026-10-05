@@ -40,6 +40,14 @@ Un TP que guarda contraseñas en el repositorio o en variables de entorno en tex
 - RLS exige disciplina: cada sesión debe fijar el `tenant_id` y las políticas hay que testearlas, porque un error silencioso no da error sino datos de menos.
 - La instancia corre 24/7 aunque no haya tráfico, a diferencia del resto de la arquitectura.
 
+## Riesgo conocido (asentado 04/10, no corregido)
+
+`random_password.db_owner` queda **en claro dentro del tfstate**, además de en
+Secrets Manager. Quien tenga lectura del bucket de state puede leerlo: hoy, el
+grupo `malka-devs` (tiene `ReadOnlyAccess`, que incluye `s3:GetObject`).
+Mitigación posible a futuro, cuando el equipo lo pida: mover la generación del
+password fuera de Terraform. Deuda asentada acá, sin issue propio.
+
 ## Alternativas consideradas
 
 **Aurora Serverless v2.** Escala a demanda y sería el match ideal con Lambda, pero su capacidad mínima facturable la vuelve más cara que `db.t4g.micro` para un uso tan bajo. Descartada por costo.
