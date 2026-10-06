@@ -65,7 +65,7 @@ resource "aws_lambda_function" "api" {
   }
 
   environment {
-      variables = {
+    variables = {
       APP_ENVIRONMENT = var.environment
       APP_VERSION     = var.image_tag
 
