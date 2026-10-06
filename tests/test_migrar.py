@@ -25,6 +25,7 @@ def test_downgrade_exige_revision_explicita() -> None:
     with pytest.raises(ValueError, match="revision explicita"):
         handler({"accion": "downgrade"}, None)
 
+
 def test_sin_secreto_del_rol_app_no_hace_nada(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DB_APP_SECRET_NAME", raising=False)
     assert preparar_rol_app() == "sin_secreto_configurado"
