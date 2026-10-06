@@ -58,7 +58,7 @@ jobs:
 
    
       - name: Pytest con cobertura
-        run: pytest -m "not integration" --cov=app --cov-report=term-missing
+        run: pytest --cov=app --cov-report=term-missing
 
   infra:
     name: infra
