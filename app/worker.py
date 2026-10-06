@@ -1,8 +1,9 @@
 """Worker de Malka Suite.
 
-Consume las colas SQS de documentos e ingesta. Por ahora solo registra el
-mensaje para poder verificar el circuito del #37; el borrador asincronico
-con Bedrock (#40) reemplaza la logica dejando el mismo handler.
+Consume las colas SQS de documentos e ingesta. Por ahora solo registra la
+recepcion (cola e id, nunca el cuerpo) para poder verificar el circuito del
+#37; el borrador asincronico con Bedrock (#40) reemplaza la logica dejando
+el mismo handler.
 """
 
 from __future__ import annotations
@@ -22,10 +23,9 @@ def handler(event: dict[str, Any], context: object) -> dict[str, int]:
         cuerpo = registro.get("body", "")
 
         logger.info(
-            "mensaje recibido cola=%s id_mensaje=%s cuerpo=%s",
+            "mensaje recibido cola=%s id_mensaje=%s",
             registro.get("eventSourceARN", "?").split(":")[-1],
             registro.get("messageId", "?"),
-            cuerpo,
         )
 
         if cuerpo == "veneno":

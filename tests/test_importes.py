@@ -1,0 +1,237 @@
+"""Tests del calculo de importes (#41): cuentas hechas a mano, sin base."""
+
+from __future__ import annotations
+
+import json
+from decimal import Decimal
+from typing import Any
+
+import pytest
+
+from app.services.documentos.importes import (
+    Alicuota,
+    ImporteInvalido,
+    Linea,
+    SubtotalAlicuota,
+    calcular_importes,
+    redondear,
+)
+
+
+@pytest.mark.parametrize(
+    ("valor", "esperado"),
+    [
+        ("777.7728", "777.77"),
+        ("0.525", "0.53"),  # prueba del HALF_UP
+        ("1.005", "1.01"),
+        ("0.0756", "0.08"),
+        ("0", "0.00"),  # siempre con dos decimales
+    ],
+)
+def test_redondear(valor: str, esperado: str) -> None:
+    assert str(redondear(Decimal(valor))) == esperado
+
+
+def test_una_linea_al_21() -> None:
+    # 3 x 1234.56 = 3703.68 | IVA 3703.68 x 0.21 = 777.7728 -> 777.77
+    r = calcular_importes([Linea(3, Decimal("1234.56"), Alicuota.IVA_21)])
+
+    assert r.lineas_neto == (Decimal("3703.68"),)
+    assert r.neto == Decimal("3703.68")
+    assert r.iva == Decimal("777.77")
+    assert r.total == Decimal("4481.45")
+    assert r.moneda == "ARS"
+    assert r.tipo_cambio is None
+    assert r.exportacion is False
+    assert r.total_en_pesos == r.total
+
+
+def test_alicuotas_mezcladas_se_agrupan_de_menor_a_mayor() -> None:
+    # 2 x 2500 = 5000.00 al 21% -> IVA 1050.00
+    # 10 x 15000 = 150000.00 al 10.5% -> IVA 15750.00
+    r = calcular_importes(
+        [
+            Linea(2, Decimal("2500.00"), Alicuota.IVA_21),
+            Linea(10, Decimal("15000.00"), Alicuota.IVA_10_5),
+        ]
+    )
+
+    # Aunque la linea al 21% viene primero, el 10.5% sale antes.
+    assert r.por_alicuota == (
+        SubtotalAlicuota(Alicuota.IVA_10_5, Decimal("150000.00"), Decimal("15750.00")),
+        SubtotalAlicuota(Alicuota.IVA_21, Decimal("5000.00"), Decimal("1050.00")),
+    )
+    assert r.neto == Decimal("155000.00")
+    assert r.iva == Decimal("16800.00")
+    assert r.total == Decimal("171800.00")
+
+
+def test_el_medio_centavo_redondea_hacia_arriba() -> None:
+    # IVA 2.50 x 0.21 = 0.525 -> 0.53 (con ROUND_HALF_EVEN daria 0.52)
+    r = calcular_importes([Linea(1, Decimal("2.50"), Alicuota.IVA_21)])
+
+    assert r.iva == Decimal("0.53")
+    assert r.total == Decimal("3.03")
+
+
+def test_el_iva_se_calcula_por_alicuota_y_no_por_linea() -> None:
+    # Por alicuota: 0.36 x 0.21 = 0.0756 -> 0.08
+    # Por linea habria sido 0.0252 -> 0.03, tres veces = 0.09
+    r = calcular_importes([Linea(1, Decimal("0.12"), Alicuota.IVA_21)] * 3)
+
+    assert len(r.por_alicuota) == 1
+    assert r.neto == Decimal("0.36")
+    assert r.iva == Decimal("0.08")
+    assert r.total == Decimal("0.44")
+
+
+def test_el_neto_de_cada_linea_se_redondea() -> None:
+    # 3 x 0.335 = 1.005 -> 1.01
+    r = calcular_importes([Linea(3, Decimal("0.335"), Alicuota.IVA_0)])
+
+    assert r.lineas_neto == (Decimal("1.01"),)
+    assert r.total == Decimal("1.01")
+
+
+def test_los_importes_salen_siempre_con_dos_decimales() -> None:
+    # 5 x 100 = 500 al 0%: el IVA es "0.00", no "0"
+    r = calcular_importes([Linea(5, Decimal("100"), Alicuota.IVA_0)])
+
+    assert str(r.neto) == "500.00"
+    assert str(r.iva) == "0.00"
+    assert str(r.total) == "500.00"
+
+
+def test_exportacion_no_cobra_iva_aunque_la_linea_traiga_alicuota() -> None:
+    # 20 x 45.00 USD = 900.00, sin IVA aunque la linea diga 21%
+    # En pesos: 900.00 x 1250.50 = 1125450.00
+    r = calcular_importes(
+        [Linea(20, Decimal("45.00"), Alicuota.IVA_21)],
+        exportacion=True,
+        moneda="USD",
+        tipo_cambio=Decimal("1250.50"),
+    )
+
+    assert r.por_alicuota == (
+        SubtotalAlicuota(Alicuota.IVA_0, Decimal("900.00"), Decimal("0.00")),
+    )
+    assert r.iva == Decimal("0.00")
+    assert r.total == Decimal("900.00")
+    assert r.moneda == "USD"
+    assert r.exportacion is True
+    assert r.total_en_pesos == Decimal("1125450.00")
+
+
+def test_el_total_en_pesos_se_redondea() -> None:
+    # 3 x 33.33 = 99.99 USD | 99.99 x 1234.567 = 123444.35433 -> 123444.35
+    r = calcular_importes(
+        [Linea(3, Decimal("33.33"), Alicuota.IVA_0)],
+        exportacion=True,
+        moneda="USD",
+        tipo_cambio=Decimal("1234.567"),
+    )
+
+    assert r.total == Decimal("99.99")
+    assert str(r.total_en_pesos) == "123444.35"
+
+
+@pytest.mark.parametrize(
+    ("moneda", "tipo_cambio"),
+    [
+        ("USD", None),  # moneda extranjera sin cotizacion
+        ("USD", Decimal("0")),
+        ("USD", Decimal("-1")),
+        ("ARS", Decimal("1000")),  # en pesos no se informa tipo de cambio
+    ],
+)
+def test_tipo_de_cambio_invalido(moneda: str, tipo_cambio: Decimal | None) -> None:
+    with pytest.raises(ImporteInvalido):
+        calcular_importes(
+            [Linea(1, Decimal("10.00"), Alicuota.IVA_0)],
+            moneda=moneda,
+            tipo_cambio=tipo_cambio,
+        )
+
+
+def test_un_documento_sin_lineas_es_invalido() -> None:
+    with pytest.raises(ImporteInvalido):
+        calcular_importes([])
+
+
+@pytest.mark.parametrize(
+    ("cantidad", "precio_unitario", "alicuota"),
+    [
+        (0, Decimal("10.00"), Alicuota.IVA_21),  # cantidad cero
+        (-1, Decimal("10.00"), Alicuota.IVA_21),  # cantidad negativa
+        (1.5, Decimal("10.00"), Alicuota.IVA_21),  # cantidad no entera
+        (True, Decimal("10.00"), Alicuota.IVA_21),  # bool es int en Python
+        (1, Decimal("-0.01"), Alicuota.IVA_21),  # precio negativo
+        (1, 10.0, Alicuota.IVA_21),  # float en lugar de Decimal
+        (1, Decimal("NaN"), Alicuota.IVA_21),  # no es un numero
+        (1, Decimal("Infinity"), Alicuota.IVA_21),
+        (1, Decimal("10.00"), Decimal("0.21")),  # alicuota fuera del enum
+    ],
+)
+def test_linea_invalida(cantidad: Any, precio_unitario: Any, alicuota: Any) -> None:
+    with pytest.raises(ImporteInvalido):
+        Linea(cantidad, precio_unitario, alicuota)
+
+
+def test_precio_cero_es_valido() -> None:
+    # Una bonificacion o una muestra sin cargo: neto 0.00, no es un error.
+    r = calcular_importes([Linea(2, Decimal("0"), Alicuota.IVA_21)])
+
+    assert str(r.total) == "0.00"
+
+
+def test_como_dict_nacional_con_dos_alicuotas() -> None:
+    r = calcular_importes(
+        [
+            Linea(2, Decimal("2500.00"), Alicuota.IVA_21),
+            Linea(10, Decimal("15000.00"), Alicuota.IVA_10_5),
+        ]
+    )
+
+    assert r.como_dict() == {
+        "lineas_neto": ["5000.00", "150000.00"],
+        "por_alicuota": [
+            {"alicuota": "0.105", "neto": "150000.00", "iva": "15750.00"},
+            {"alicuota": "0.21", "neto": "5000.00", "iva": "1050.00"},
+        ],
+        "neto": "155000.00",
+        "iva": "16800.00",
+        "total": "171800.00",
+        "moneda": "ARS",
+        "tipo_cambio": None,
+        "exportacion": False,
+        "total_en_pesos": "171800.00",
+    }
+
+
+def test_como_dict_exportacion() -> None:
+    r = calcular_importes(
+        [Linea(20, Decimal("45.00"), Alicuota.IVA_21)],
+        exportacion=True,
+        moneda="USD",
+        tipo_cambio=Decimal("1250.50"),
+    )
+
+    d = r.como_dict()
+
+    assert d["por_alicuota"] == [{"alicuota": "0", "neto": "900.00", "iva": "0.00"}]
+    assert d["tipo_cambio"] == "1250.50"
+    assert d["exportacion"] is True
+    assert d["total_en_pesos"] == "1125450.00"
+
+
+def test_como_dict_sobrevive_a_json_sin_floats() -> None:
+    # Ida y vuelta por JSON, como cuando se guarda en snapshot_json.
+    r = calcular_importes([Linea(3, Decimal("1234.56"), Alicuota.IVA_21)])
+
+    texto = json.dumps(r.como_dict())
+    leido = json.loads(texto)
+
+    assert leido == r.como_dict()
+    assert '"total": "4481.45"' in texto  # entre comillas: texto, no numero
+    assert Decimal(leido["total"]) == r.total
+    assert Alicuota(Decimal(leido["por_alicuota"][0]["alicuota"])) is Alicuota.IVA_21
