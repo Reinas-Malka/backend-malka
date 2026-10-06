@@ -65,13 +65,16 @@ resource "aws_lambda_function" "api" {
   }
 
   environment {
-    variables = {
+      variables = {
       APP_ENVIRONMENT = var.environment
       APP_VERSION     = var.image_tag
 
       # Para encolar el borrador (#40) sin hardcodear nombres de cola.
       COLA_DOCUMENTOS_URL = aws_sqs_queue.documentos.url
       COLA_INGESTA_URL    = aws_sqs_queue.ingesta.url
+
+      # Rol sin privilegios: RLS se aplica siempre.
+      DB_SECRET_NAME = aws_secretsmanager_secret.db_app.name
     }
   }
 
