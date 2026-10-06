@@ -188,10 +188,12 @@ data "aws_iam_policy_document" "lambda_secretos" {
   }
 }
 
+# La API solo puede leer el secreto del rol de aplicacion, nunca el del
+# duenio: con el duenio, RLS se saltearia.
 resource "aws_iam_role_policy" "lambda_secretos" {
   name   = "${local.name}-lectura-de-secretos"
   role   = aws_iam_role.lambda_api.id
-  policy = data.aws_iam_policy_document.lambda_secretos.json
+  policy = data.aws_iam_policy_document.lambda_secreto_app.json
 }
 
 ###############################################################################
