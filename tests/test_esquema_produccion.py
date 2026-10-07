@@ -1,7 +1,7 @@
 """Esquema de produccion de la migracion 0003 contra un PostgreSQL real (#26).
 
 Cubre el DoD de la #26: aislamiento por tenant en cada tabla nueva (madre,
-parque_fecundacion, nucleo y celda), incluido el caso de fuga entre tenants,
+parque, nucleo y celda), incluido el caso de fuga entre tenants,
 y las reglas de docs/dominio.md que hace cumplir la propia base.
 """
 
@@ -18,7 +18,7 @@ from tests.conftest import crear_tenant, fijar_tenant
 
 pytestmark = pytest.mark.integration
 
-TABLAS_NUEVAS = ("madre", "parque_fecundacion", "nucleo", "celda")
+TABLAS_NUEVAS = ("madre", "parque", "nucleo", "celda")
 CELDAS_POR_TANDA = 3
 
 
@@ -55,7 +55,7 @@ def _cargar_criadero(c: Connection, tenant: uuid.UUID) -> Criadero:
         madre=madre,
     )
     parque = insertar(
-        "INSERT INTO parque_fecundacion (nombre, ubicacion, capacidad_max) "
+        "INSERT INTO parque (nombre, ubicacion, capacidad_max) "
         "VALUES ('P1', 'Predio norte', 9) RETURNING id"
     )
     nucleo = insertar(
@@ -88,7 +88,7 @@ def criaderos(motor_owner: Engine) -> Iterator[tuple[Criadero, Criadero]]:
             for tabla in (
                 "celda",
                 "nucleo",
-                "parque_fecundacion",
+                "parque",
                 "tanda",
                 "madre",
                 "raza",
@@ -127,7 +127,7 @@ def test_cada_tenant_ve_solo_lo_suyo(
     [
         ("madre", "(tenant_id, identificacion) VALUES (:otro, 'intrusa')"),
         (
-            "parque_fecundacion",
+            "parque",
             "(tenant_id, nombre, ubicacion, capacidad_max) "
             "VALUES (:otro, 'intruso', 'Predio sur', 1)",
         ),

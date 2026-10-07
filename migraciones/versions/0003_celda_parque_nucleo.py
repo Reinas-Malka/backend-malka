@@ -28,7 +28,7 @@ ROL_APP = "malka_app"
 # celda nunca se borra, se cierra con un estado terminal (#28).
 PERMISOS_TABLAS_NUEVAS = {
     "madre": "SELECT, INSERT, UPDATE",
-    "parque_fecundacion": "SELECT, INSERT, UPDATE",
+    "parque": "SELECT, INSERT, UPDATE",
     "nucleo": "SELECT, INSERT, UPDATE",
     "celda": "SELECT, INSERT, UPDATE",
 }
@@ -165,7 +165,7 @@ def upgrade() -> None:
     # banco (reinas ya fecundadas y cosechadas) es otra etapa y no entra aca:
     # se modela con la salida de reinas.
     op.create_table(
-        "parque_fecundacion",
+        "parque",
         _id(),
         _tenant_id(),
         sa.Column("nombre", sa.Text(), nullable=False),
@@ -196,7 +196,7 @@ def upgrade() -> None:
         sa.CheckConstraint("fila > 0 AND posicion > 0", name="ck_nucleo_ubicacion"),
         sa.ForeignKeyConstraint(
             ["tenant_id", "parque_id"],
-            ["parque_fecundacion.tenant_id", "parque_fecundacion.id"],
+            ["parque.tenant_id", "parque.id"],
             name="fk_nucleo_parque_mismo_tenant",
             ondelete="RESTRICT",
         ),
@@ -263,7 +263,7 @@ def downgrade() -> None:
     # Al borrar cada tabla se borran tambien sus indices, politicas y GRANT.
     op.drop_table("celda")
     op.drop_table("nucleo")
-    op.drop_table("parque_fecundacion")
+    op.drop_table("parque")
 
     op.drop_index("ix_tanda_tenant_madre", table_name="tanda")
     op.drop_constraint("fk_tanda_madre_mismo_tenant", "tanda", type_="foreignkey")
