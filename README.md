@@ -432,7 +432,7 @@ terraform apply
 | `origenes_permitidos` | Orígenes habilitados para CORS |
 | `habilitar_endpoint_sqs` | VPC endpoint de SQS: lo usa la API para enviar mensajes (~7,30 USD/mes; se cobra por AZ) |
 | `habilitar_endpoint_bedrock` | VPC endpoint de bedrock-runtime: apagado hasta que el worker llame a Bedrock (#40) |
-| `presupuesto_mensual_usd` / `email_alertas` | Tope y email de la alerta de AWS Budgets (con email vacío no se crea) |
+| `presupuesto_mensual_usd` / `email_alertas` | Tope y email de la alerta de AWS Budgets (`email_alertas` es **obligatoria**: `TF_VAR_email_alertas`; sin ella `terraform plan` falla) |
 | `habilitar_endpoint_secretos` | Crea el VPC endpoint de Secrets Manager |
 | `db_clase_instancia` | Clase de la instancia de RDS |
 

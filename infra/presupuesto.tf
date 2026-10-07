@@ -2,13 +2,11 @@
 # Presupuesto mensual con alerta (issue de costos, auditoria del 01/10)
 #
 # AWS Budgets no tiene costo. Avisa por email al superar el 80% del gasto
-# real y al pronosticar pasar el 100% del mes. Solo se crea si se carga el
-# email en la variable email_alertas.
+# real y al pronosticar pasar el 100% del mes. email_alertas es obligatoria:
+# sin ella terraform plan falla en vez de proponer destruir el presupuesto.
 ###############################################################################
 
 resource "aws_budgets_budget" "mensual" {
-  count = var.email_alertas != "" ? 1 : 0
-
   name              = "${local.name}-mensual"
   budget_type       = "COST"
   limit_amount      = var.presupuesto_mensual_usd
