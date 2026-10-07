@@ -164,14 +164,21 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          archivo_s3_key, fecha
                          → completitud = los 6 tipos presentes
 
-    tanda:               fecha_traslarve, madre_id, celdas_trasladadas
-    celda:               tanda_id, nucleo_id, fecha_introduccion, estado,
-                         fecha_nacimiento, fecha_fecundacion, fecha_enjaulado
+    madre:               identificacion, activo
+                         UNIQUE (tenant_id, identificacion)
+    tanda:               fecha_traslarve, madre_id NOT NULL, raza_id,
+                         retroactivo
+                         → celdas_trasladadas NO es columna: COUNT(*) de celda
+    celda:               tanda_id, nucleo_id (NULL hasta introducirla),
+                         estado, fecha_introduccion, fecha_nacimiento,
+                         fecha_fecundacion, fecha_enjaulado
                          → los % se calculan a nivel celda y se agregan por
                            tanda y por madre sin duplicar lógica
 
-    parque:              ubicacion (texto simple, sin tabla predio)
-    nucleo:              parque_id NOT NULL
+    parque:              nombre, ubicacion (texto simple, sin tabla predio),
+                         capacidad_max (en núcleos), activo
+    nucleo:              parque_id NOT NULL, fila, posicion, activo
+                         UNIQUE (tenant_id, parque_id, fila, posicion)
     banco:               FUERA DE FASE 1 (almacena reinas ya fecundadas)
 
     material:            unidad (texto corto, sin enum cerrado)
