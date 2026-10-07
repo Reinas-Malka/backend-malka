@@ -101,8 +101,13 @@ def crear_tenant(conexion: Connection, tenant: uuid.UUID) -> None:
     actualiza solo aca.
     """
     conexion.execute(
-        text("INSERT INTO tenant (id, nombre) VALUES (:id, :nombre)"),
-        {"id": tenant, "nombre": f"Criadero {tenant}"},
+        text("INSERT INTO tenant (id, nombre, cuit) VALUES (:id, :nombre, :cuit)"),
+        {
+            "id": tenant,
+            "nombre": f"Criadero {tenant}",
+            # 11 digitos derivados del id: distinto para cada tenant de prueba.
+            "cuit": f"{tenant.int % 10**11:011d}",
+        },
     )
 
 

@@ -75,6 +75,11 @@ resource "aws_lambda_function" "api" {
 
       # Rol sin privilegios: RLS se aplica siempre.
       DB_SECRET_NAME = aws_secretsmanager_secret.db_app.name
+
+      # Validacion de los ID tokens. El JWKS no va aca: viaja como
+      # archivo en la imagen (app/jwks_cognito_dev.json, ADR 0010).
+      COGNITO_ISSUER    = "https://cognito-idp.${var.region}.amazonaws.com/${aws_cognito_user_pool.principal.id}"
+      COGNITO_CLIENT_ID = aws_cognito_user_pool_client.spa.id
     }
   }
 
