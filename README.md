@@ -414,9 +414,13 @@ El backend de estado se configura con `backend.hcl`, que **no está versionado**
 export AWS_PROFILE=malka
 cd infra
 terraform init -backend-config=backend.hcl
-terraform plan     # sobre main debe decir: No changes
-terraform apply
+terraform plan -var-file=dev.tfvars     # sobre main debe decir: No changes
+terraform apply -var-file=dev.tfvars
 ```
+
+`dev.tfvars` está versionado y trae las variables del entorno dev (entre
+ellas `email_alertas`, obligatoria desde el #76: sin el archivo, ni un plan
+de lectura corre).
 
 **Reglas de oro del equipo:**
 
