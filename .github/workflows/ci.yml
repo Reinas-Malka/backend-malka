@@ -40,6 +40,31 @@ jobs:
       - name: Tipos
         run: mypy
 
+      - name: Una sola cabeza de Alembic
+        run: |
+          cabezas=$(alembic heads | grep -c . || true)
+          if [ "$cabezas" -gt 1 ]; then
+            alembic heads
+            echo "::error::Hay $cabezas cabezas de Alembic: dos migraciones cuelgan de la misma revision (regla de AGENTS.md)"
+            exit 1
+          fi
+
+      # ADR 0010: el JWKS viaja como archivo en la imagen; la VPC no tiene
+      # salida a internet, una llamada a cognito-idp en runtime fallaria
+      # recien en AWS. Este grep la hace visible en el PR.
+      - name: JWKS offline (ADR 0010)
+        run: |
+          fallo=0
+          # Sin uso legitimo en ningun lado: la URL del JWKS y su env var.
+          if grep -rnE 'well-known/jwks|COGNITO_JWKS_URL' app; then fallo=1; fi
+          # Clientes HTTP solo en app/auth.py: el iss contiene "cognito-idp"
+          # y es parte de la validacion legitima (#21), no se busca global.
+          if [ -f app/auth.py ] && grep -nE '\b(requests|httpx|urlopen|aiohttp)\b' app/auth.py; then fallo=1; fi
+          if [ "$fallo" = 1 ]; then
+            echo "::error::El JWKS se lee del archivo versionado en la imagen (ADR 0010): nada en app/ puede descargarlo en runtime"
+            exit 1
+          fi
+
   tests:
     name: tests
     runs-on: ubuntu-latest
