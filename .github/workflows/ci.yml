@@ -40,6 +40,15 @@ jobs:
       - name: Tipos
         run: mypy
 
+      - name: Una sola cabeza de Alembic
+        run: |
+          cabezas=$(alembic heads | grep -c . || true)
+          if [ "$cabezas" -gt 1 ]; then
+            alembic heads
+            echo "::error::Hay $cabezas cabezas de Alembic: dos migraciones cuelgan de la misma revision (regla de AGENTS.md)"
+            exit 1
+          fi
+
   tests:
     name: tests
     runs-on: ubuntu-latest
