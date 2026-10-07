@@ -95,6 +95,30 @@ Los KPIs no cambian: el denominador sigue siendo **celdas introducidas**.
 - El % de aceptación post traslarve **no** es el indicador relevante;
   `celdas_operculadas` queda opcional y sin reportes encima.
 
+## Materiales y consumo (confirmado 07/10)
+
+- **El stock no se guarda**: se calcula sumando movimientos. Tres tipos con
+  signo — `compra` (positiva), `consumo` (negativa), `ajuste` (cualquiera) —
+  con un CHECK de coherencia por tipo.
+- **El stock negativo se permite y no lleva constraint**. Motivo técnico:
+  es una suma calculada y validarla obligaría a lockear la tabla. Motivo
+  real: los movimientos se cargan tarde, y bloquear el consumo impediría
+  registrar la tanda — que es el dato que importa. Se resuelve con una
+  **advertencia en la respuesta del alta**.
+- La **unidad vive en `material`**, como texto corto, sin enum cerrado.
+- **El material es la cúpula suelta** (que es como se compra). La
+  multiplicación por cúpulas por cuadro vive en el **servicio de alta**,
+  jamás en la tabla.
+- El alta de tanda recibe **cantidad de cuadros de madera** (1, 2 o 3) y el
+  sistema multiplica: cada cuadro tiene listones y cada listón 15 cúpulas —
+  **`CUPULAS_POR_CUADRO = 135` como constante nombrada en un solo lugar**.
+  Nunca un número libre de cúpulas.
+- **Ambigüedad abierta (no resolver)**: no está claro si un cuadro son 135
+  cúpulas o si las 135 son entre los tres cuadros. Repreguntado a la
+  clienta; mientras tanto la constante es el único lugar a tocar.
+- El descuento de material es **automático al crear la tanda**, sin paso de
+  confirmación: movimiento de consumo directo en el alta (#27).
+
 ## Retención de documentos en S3
 
 | Prefijo | Transición | Expiración | Motivo |
@@ -140,13 +164,29 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          archivo_s3_key, fecha
                          → completitud = los 6 tipos presentes
 
-    tanda:               fecha_traslarve, madre_id, celdas_trasladadas
-    celda:               tanda_id, nucleo_id, fecha_introduccion, estado,
-                         fecha_nacimiento, fecha_fecundacion, fecha_enjaulado
+    madre:               identificacion, activo
+                         UNIQUE (tenant_id, identificacion)
+    tanda:               fecha_traslarve, madre_id NOT NULL, raza_id,
+                         retroactivo
+                         → celdas_trasladadas NO es columna: COUNT(*) de celda
+    celda:               tanda_id, nucleo_id (NULL hasta introducirla),
+                         estado, fecha_introduccion, fecha_nacimiento,
+                         fecha_fecundacion, fecha_enjaulado
                          → los % se calculan a nivel celda y se agregan por
                            tanda y por madre sin duplicar lógica
 
-### Notas al modelo (decisiones del 05/10)
+    parque:              nombre, ubicacion (texto simple, sin tabla predio),
+                         capacidad_max (en núcleos), activo
+    nucleo:              parque_id NOT NULL, fila, posicion, activo
+                         UNIQUE (tenant_id, parque_id, fila, posicion)
+    banco:               FUERA DE FASE 1 (almacena reinas ya fecundadas)
+
+    material:            unidad (texto corto, sin enum cerrado)
+    movimiento_material: material_id, tipo (compra|consumo|ajuste),
+                         cantidad_con_signo, motivo
+                         → stock = SUM(cantidades), nunca una columna
+
+### Notas al modelo (decisiones del 04/10, corregidas el 07/10)
 
 - **`celdas_trasladadas` no es columna**: es `COUNT(*)` de celdas de la tanda.
   Una fila de `celda` por cada cúpula traslarvada, estado inicial
@@ -154,12 +194,19 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
   que `porcentaje_fecundacion`.
 - `celda.nucleo_id` es **NULLABLE**: la celda recién traslarvada no tiene
   núcleo; se introduce recién alrededor del día 10.
-- **Jerarquía banco → núcleo** (viene del brief original, no de las
-  confirmaciones): `nucleo.banco_id NOT NULL`; `banco.capacidad_max` se
-  mide en núcleos por banco.
+- **Parque y banco son DOS entidades distintas — no confundirlas** (corregido
+  el 07/10 tras confirmación de la clienta; el error se quiso repetir):
+  - **Parque de fecundación**: donde se lleva la celda, se mete en un
+    **núcleo** y se espera la fecundación. `nucleo.parque_id NOT NULL` — el
+    núcleo cuelga del parque. El parque lleva su **ubicación como texto
+    simple** (pueden estar en distintos predios; sin tabla `predio`).
+  - **Banco**: donde se almacenan reinas **ya fecundadas y cosechadas** — un
+    momento posterior del ciclo, NO un contenedor de núcleos. **Fuera del
+    alcance de fase 1.**
 - La **alícuota de IVA vive en el catálogo de ítems vendibles** (enum de
-  `importes.py`), no en el cliente. Valor para reinas: pendiente de la
-  clienta (21% o 10,5%); configurable, sin valor asumido.
+  `importes.py`), no en el cliente. Valor para reinas: **default 21%,
+  NO VERIFICADO** (la clienta respondió "creo"; confirmar con una factura
+  vieja) y sigue configurable por ítem.
 - **`punto_venta` y `numero` son DOS enteros separados**, nunca el string
   impreso concatenado: `0001-00000045` es la REPRESENTACIÓN IMPRESA. El
   padding (4-5 y 8 dígitos) se arma al mostrar. Guardar el string
