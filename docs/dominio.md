@@ -140,13 +140,17 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          archivo_s3_key, fecha
                          → completitud = los 6 tipos presentes
 
-    tanda:               fecha_traslarve, madre_id, celdas_trasladadas
+    madre:               tenant_id, identificacion, activo
+    tanda:               fecha_traslarve, madre_id, raza_id, retroactivo
+    banco:               tenant_id, nombre, capacidad_max (en núcleos)
+    nucleo:              banco_id, fila, posicion
+                         UNIQUE (tenant_id, banco_id, fila, posicion)
     celda:               tanda_id, nucleo_id, fecha_introduccion, estado,
                          fecha_nacimiento, fecha_fecundacion, fecha_enjaulado
                          → los % se calculan a nivel celda y se agregan por
                            tanda y por madre sin duplicar lógica
 
-### Notas al modelo (decisiones del 05/10)
+### Notas al modelo (decisiones del 04/10)
 
 - **`celdas_trasladadas` no es columna**: es `COUNT(*)` de celdas de la tanda.
   Una fila de `celda` por cada cúpula traslarvada, estado inicial
