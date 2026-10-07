@@ -48,6 +48,15 @@ Usar el **ID token**: es el que trae `aud` y `custom:tenant_id`.
 El access token de Cognito no tiene `aud` (tiene `client_id`) ni `custom:tenant_id`.
 Por eso el frontend debe mandar el ID token en `Authorization: Bearer`.
 
+La validación está en `app/auth.py`: firma RS256 contra el JWKS versionado en `app/jwks_cognito_dev.json` (cargado al importar el módulo), `iss`, `aud`, `exp` y `token_use = id`. Ver ADR 0010.
+
+- Token ausente o inválido: **401** (`token_ausente`, `token_invalido`). Token sin `custom:tenant_id`: **401** (`tenant_ausente`).
+- Token firmado con un `kid` que no está en el archivo: **401** (`clave_desconocida`). Hay que regenerar el archivo:
+
+      curl -s https://cognito-idp.us-east-1.amazonaws.com/<user pool id>/.well-known/jwks.json > app/jwks_cognito_dev.json
+
+- Rol insuficiente: **403** (`sin_permiso`). Los roles se exigen en el router con `require_role(...)`.
+
 ## Antes de usar en produccion
 
 Poner `cognito_password_auth_habilitado = false`.

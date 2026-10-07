@@ -64,6 +64,26 @@ class ValidacionError(ErrorDeApi):
     codigo_por_defecto = "validacion"
 
 
+class NoAutenticadoError(ErrorDeApi):
+    """Falta el token o no es valido (401).
+
+    Ejemplo: un ID token vencido o firmado con otra clave.
+    """
+
+    status_code = 401
+    codigo_por_defecto = "no_autenticado"
+
+
+class SinPermisoError(ErrorDeApi):
+    """El usuario esta autenticado pero su rol no alcanza (403).
+
+    Ejemplo: un usuario de solo lectura que intenta dar de alta una raza.
+    """
+
+    status_code = 403
+    codigo_por_defecto = "sin_permiso"
+
+
 CODIGOS_HTTP = {
     400: "pedido_invalido",
     401: "no_autenticado",
