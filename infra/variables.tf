@@ -37,7 +37,8 @@ variable "habilitar_endpoint_bedrock" {
 variable "presupuesto_mensual_usd" {
   description = "Tope del presupuesto mensual de AWS para la alarma de AWS Budgets"
   type        = number
-  default     = 15
+  # 25 porque el costo fijo ya es ~14,60: con 15 quedaban centavos de margen
+  default = 25
 }
 
 variable "email_alertas" {

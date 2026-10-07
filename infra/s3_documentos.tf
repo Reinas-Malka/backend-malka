@@ -144,7 +144,7 @@ resource "aws_s3_bucket_cors_configuration" "documentos" {
 
   cors_rule {
     allowed_methods = ["GET", "PUT", "HEAD"]
-    allowed_origins = var.origenes_permitidos
+    allowed_origins = local.origenes_reales
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]
     max_age_seconds = 300

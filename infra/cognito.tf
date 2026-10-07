@@ -6,8 +6,8 @@ locals {
 
   # Se derivan de los origenes ya permitidos para CORS.
   # Asume que la SPA atiende el callback en /auth/callback.
-  cognito_callback_urls = [for o in var.origenes_permitidos : "${o}/auth/callback"]
-  cognito_logout_urls   = [for o in var.origenes_permitidos : "${o}/"]
+  cognito_callback_urls = [for o in local.origenes_reales : "${o}/auth/callback"]
+  cognito_logout_urls   = [for o in local.origenes_reales : "${o}/"]
 
   cognito_grupos = {
     admin      = "Administracion del tenant y configuracion"
