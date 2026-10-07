@@ -255,6 +255,7 @@ El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No
 | `APP_VERSION` | Versión que informa el endpoint `/health` | `0.1.0` |
 | `COLA_DOCUMENTOS_URL` | URL de la cola SQS de documentos (la carga Terraform) | — |
 | `COLA_INGESTA_URL` | URL de la cola SQS de ingesta (la carga Terraform) | — |
+| `DB_SECRET_NAME` | Secreto con la credencial de la base. En la API es el del rol de aplicación (`db/app`) | — |
 
 En local no hace falta definirlas. En AWS las carga Terraform en la Lambda: `APP_VERSION` toma el valor de la variable `image_tag`.
 
@@ -267,14 +268,17 @@ El esquema se versiona con [Alembic](https://alembic.sqlalchemy.org/). No se usa
 La dirección de la base la arma `app/config.py`: en local, con la variable `DATABASE_URL`; en AWS, con el secreto de Secrets Manager indicado en `DB_SECRET_NAME`.
 
 Las tablas de negocio tienen Row Level Security forzado con la política `aislamiento_por_tenant`: cada consulta solo ve las filas del tenant definido con `SET LOCAL app.tenant_id` en esa transacción. Sin tenant definido, devuelven cero filas.
+La API se conecta con el rol `malka_app`, que no es dueño de las tablas ni tiene `BYPASSRLS`; ver [ADR 0009](docs/adr/0009-contexto-de-tenant-y-rol-de-aplicacion.md).
 
 ### Correr las migraciones en local
 
 Con Docker Desktop abierto, levantar PostgreSQL 16 y crear un usuario sin privilegios de superusuario (los superusuarios saltean RLS):
 
+El dueño necesita `CREATEROLE`, igual que el usuario master de RDS: la migración 0002 crea el rol de la aplicación.
+
 ```bash
 docker run --name malka-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
-docker exec -it malka-postgres psql -U postgres -c "CREATE ROLE malka_owner LOGIN PASSWORD 'malka';" -c "CREATE DATABASE malka OWNER malka_owner;"
+docker exec -it malka-postgres psql -U postgres -c "CREATE ROLE malka_owner LOGIN CREATEROLE PASSWORD 'malka';" -c "CREATE DATABASE malka OWNER malka_owner;"
 ```
 
 Definir la URL y aplicar las migraciones:

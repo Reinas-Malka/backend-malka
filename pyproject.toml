@@ -19,5 +19,5 @@ testpaths = ["tests"]
 pythonpath = ["."]       
 addopts = "-ra"          
 markers = [
-    "integration: necesita PostgreSQL; se excluye del CI hasta que entre RDS",
+    "integration: necesita Docker (levanta PostgreSQL 16 con testcontainers)",
 ]
