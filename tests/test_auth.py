@@ -19,8 +19,9 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
-from app import auth, contexto
+from app import auth, contexto, db
 from app.auth import Identidad, identidad_actual, obtener_config_cognito, require_role
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
@@ -305,3 +306,27 @@ def test_el_token_no_aparece_en_los_logs(
     salida = logs.getvalue()
     assert token not in salida
     assert TENANT in salida
+
+
+# Sesion de base: el tenant del token llega a sesion_de_tenant.
+
+
+def test_sin_tenant_no_se_abre_conexion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Un token valido pero sin custom:tenant_id corta con 401 sin tocar la base."""
+
+    def explotar() -> None:
+        raise AssertionError("no tiene que abrir una conexion")
+
+    monkeypatch.setattr(db, "obtener_motor", explotar)
+    app = FastAPI()
+    registrar_manejadores(app)
+
+    @app.get("/razas")
+    def razas(sesion: Session = Depends(db.obtener_sesion)) -> list[str]:
+        return []
+
+    token = emitir(**{"custom:tenant_id": None})
+    respuesta = TestClient(app).get("/razas", headers=_con(token))
+
+    assert respuesta.status_code == 401
+    assert _codigo(respuesta) == "tenant_ausente"
