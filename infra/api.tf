@@ -9,7 +9,7 @@ resource "aws_apigatewayv2_api" "principal" {
 
   # API Gateway responde el preflight; no agregar CORSMiddleware en FastAPI.
   cors_configuration {
-    allow_origins  = var.origenes_permitidos
+    allow_origins  = local.origenes_reales
     allow_methods  = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     allow_headers  = ["content-type", "authorization"]
     expose_headers = ["x-request-id"]

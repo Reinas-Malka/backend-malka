@@ -69,10 +69,14 @@ data "aws_iam_policy_document" "github_confianza" {
 
     # La condicion que da la seguridad: el emisor es el mismo para TODOS los
     # repositorios de GitHub; sin esto, cualquiera podria asumir el rol.
+    # Dos subs: el backend (imagen + lambdas) y el frontend (deploy del SPA).
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.github_repositorio_sub}:ref:refs/heads/${local.github_rama_deploy}"]
+      values = [
+        "repo:${local.github_repositorio_sub}:ref:refs/heads/${local.github_rama_deploy}",
+        "repo:Reinas-Malka@329292836/frontend-malka@1377758180:ref:refs/heads/main",
+      ]
     }
   }
 }
@@ -141,6 +145,27 @@ data "aws_iam_policy_document" "github_deploy" {
     sid       = "InvocarMigraciones"
     actions   = ["lambda:InvokeFunction"]
     resources = [aws_lambda_function.migraciones.arn]
+  }
+
+  # El deploy del frontend (ADR 0011): publica el build e invalida la
+  # cache de CloudFront para no servir el bundle viejo.
+  statement {
+    sid = "PublicarFrontend"
+    actions = [
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      aws_s3_bucket.frontend.arn,
+      "${aws_s3_bucket.frontend.arn}/*",
+    ]
+  }
+
+  statement {
+    sid       = "InvalidarCloudFront"
+    actions   = ["cloudfront:CreateInvalidation"]
+    resources = ["*"]
   }
 }
 
