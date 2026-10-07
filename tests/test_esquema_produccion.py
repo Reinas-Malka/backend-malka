@@ -1,8 +1,8 @@
 """Esquema de produccion de la migracion 0003 contra un PostgreSQL real (#26).
 
 Cubre el DoD de la #26: aislamiento por tenant en cada tabla nueva (madre,
-banco, nucleo y celda), incluido el caso de fuga entre tenants, y las reglas
-de docs/dominio.md que hace cumplir la propia base.
+parque_fecundacion, nucleo y celda), incluido el caso de fuga entre tenants,
+y las reglas de docs/dominio.md que hace cumplir la propia base.
 """
 
 import uuid
@@ -18,7 +18,7 @@ from tests.conftest import crear_tenant, fijar_tenant
 
 pytestmark = pytest.mark.integration
 
-TABLAS_NUEVAS = ("madre", "banco", "nucleo", "celda")
+TABLAS_NUEVAS = ("madre", "parque_fecundacion", "nucleo", "celda")
 CELDAS_POR_TANDA = 3
 
 
@@ -28,11 +28,11 @@ class _Deshacer(Exception):
 
 @dataclass(frozen=True)
 class Criadero:
-    """Un tenant con una tanda de celdas y un banco con un nucleo."""
+    """Un tenant con una tanda de celdas y un parque con un nucleo."""
 
     tenant: uuid.UUID
     tanda: uuid.UUID
-    banco: uuid.UUID
+    parque: uuid.UUID
     nucleo: uuid.UUID
 
 
@@ -54,13 +54,14 @@ def _cargar_criadero(c: Connection, tenant: uuid.UUID) -> Criadero:
         raza=raza,
         madre=madre,
     )
-    banco = insertar(
-        "INSERT INTO banco (nombre, capacidad_max) VALUES ('B1', 9) RETURNING id"
+    parque = insertar(
+        "INSERT INTO parque_fecundacion (nombre, ubicacion, capacidad_max) "
+        "VALUES ('P1', 'Predio norte', 9) RETURNING id"
     )
     nucleo = insertar(
-        "INSERT INTO nucleo (banco_id, fila, posicion) "
-        "VALUES (:banco, 1, 1) RETURNING id",
-        banco=banco,
+        "INSERT INTO nucleo (parque_id, fila, posicion) "
+        "VALUES (:parque, 1, 1) RETURNING id",
+        parque=parque,
     )
     c.execute(
         text(
@@ -69,7 +70,7 @@ def _cargar_criadero(c: Connection, tenant: uuid.UUID) -> Criadero:
         ),
         {"tanda": tanda, "cantidad": CELDAS_POR_TANDA},
     )
-    return Criadero(tenant=tenant, tanda=tanda, banco=banco, nucleo=nucleo)
+    return Criadero(tenant=tenant, tanda=tanda, parque=parque, nucleo=nucleo)
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +85,14 @@ def criaderos(motor_owner: Engine) -> Iterator[tuple[Criadero, Criadero]]:
     for criadero in (a, b):
         with motor_owner.begin() as c:
             fijar_tenant(c, criadero.tenant)
-            for tabla in ("celda", "nucleo", "banco", "tanda", "madre", "raza"):
+            for tabla in (
+                "celda",
+                "nucleo",
+                "parque_fecundacion",
+                "tanda",
+                "madre",
+                "raza",
+            ):
                 c.execute(text(f"DELETE FROM {tabla} WHERE true"))  # noqa: S608
             c.execute(
                 text("DELETE FROM tenant WHERE id = :id"), {"id": criadero.tenant}
@@ -118,7 +126,11 @@ def test_cada_tenant_ve_solo_lo_suyo(
     ("tabla", "columnas"),
     [
         ("madre", "(tenant_id, identificacion) VALUES (:otro, 'intrusa')"),
-        ("banco", "(tenant_id, nombre, capacidad_max) VALUES (:otro, 'intruso', 1)"),
+        (
+            "parque_fecundacion",
+            "(tenant_id, nombre, ubicacion, capacidad_max) "
+            "VALUES (:otro, 'intruso', 'Predio sur', 1)",
+        ),
     ],
 )
 def test_no_puede_escribir_en_otro_tenant(
@@ -147,6 +159,23 @@ def test_celda_no_puede_apuntar_a_una_tanda_de_otro_tenant(
 
 
 @pytest.mark.usefixtures("con_motor_app")
+def test_nucleo_no_puede_apuntar_a_un_parque_de_otro_tenant(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    """Segunda capa: la clave foranea compuesta (tenant_id, id)."""
+    a, b = criaderos
+    with pytest.raises(IntegrityError, match="fk_nucleo_parque_mismo_tenant"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(
+                text(
+                    "INSERT INTO nucleo (parque_id, fila, posicion) "
+                    "VALUES (:parque, 2, 2)"
+                ),
+                {"parque": b.parque},
+            )
+
+
+@pytest.mark.usefixtures("con_motor_app")
 def test_tenant_id_lo_completa_postgres(criaderos: tuple[Criadero, Criadero]) -> None:
     a, _ = criaderos
     with pytest.raises(_Deshacer), db.sesion_de_tenant(a.tenant) as s:
@@ -161,7 +190,7 @@ def test_tenant_id_lo_completa_postgres(criaderos: tuple[Criadero, Criadero]) ->
 
 @pytest.mark.parametrize("tabla", TABLAS_NUEVAS)
 def test_rol_app_sin_delete(motor_owner: Engine, tabla: str) -> None:
-    """Borrado logico en madre, banco y nucleo; la celda se cierra con un estado."""
+    """Borrado logico en madre, parque y nucleo; la celda se cierra con un estado."""
     with motor_owner.connect() as c:
         puede = c.execute(
             text("SELECT has_table_privilege('malka_app', :tabla, :permiso)"),
@@ -225,10 +254,10 @@ def test_posicion_de_nucleo_ocupada(criaderos: tuple[Criadero, Criadero]) -> Non
         with db.sesion_de_tenant(a.tenant) as s:
             s.execute(
                 text(
-                    "INSERT INTO nucleo (banco_id, fila, posicion) "
-                    "VALUES (:banco, 1, 1)"
+                    "INSERT INTO nucleo (parque_id, fila, posicion) "
+                    "VALUES (:parque, 1, 1)"
                 ),
-                {"banco": a.banco},
+                {"parque": a.parque},
             )
 
 
@@ -236,6 +265,7 @@ def test_sin_modelo_de_etapas_de_tanda(motor_owner: Engine) -> None:
     """tanda_evento y tanda.etapa_actual ya no existen (docs/dominio.md)."""
     with motor_owner.connect() as c:
         tabla = c.execute(text("SELECT to_regclass('public.tanda_evento')")).scalar()
+        banco = c.execute(text("SELECT to_regclass('public.banco')")).scalar()
         columna = c.execute(
             text(
                 "SELECT count(*) FROM information_schema.columns "
@@ -244,3 +274,5 @@ def test_sin_modelo_de_etapas_de_tanda(motor_owner: Engine) -> None:
         ).scalar()
     assert tabla is None
     assert columna == 0
+    # El banco (post cosecha) se modela con la salida de reinas, no aca.
+    assert banco is None

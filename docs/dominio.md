@@ -142,9 +142,9 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
 
     madre:               tenant_id, identificacion, activo
     tanda:               fecha_traslarve, madre_id, raza_id, retroactivo
-    banco:               tenant_id, nombre, capacidad_max (en núcleos)
-    nucleo:              banco_id, fila, posicion
-                         UNIQUE (tenant_id, banco_id, fila, posicion)
+    parque_fecundacion:  tenant_id, nombre, ubicacion, capacidad_max (en núcleos)
+    nucleo:              parque_id, fila, posicion
+                         UNIQUE (tenant_id, parque_id, fila, posicion)
     celda:               tanda_id, nucleo_id, fecha_introduccion, estado,
                          fecha_nacimiento, fecha_fecundacion, fecha_enjaulado
                          → los % se calculan a nivel celda y se agregan por
@@ -158,9 +158,13 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
   que `porcentaje_fecundacion`.
 - `celda.nucleo_id` es **NULLABLE**: la celda recién traslarvada no tiene
   núcleo; se introduce recién alrededor del día 10.
-- **Jerarquía banco → núcleo** (viene del brief original, no de las
-  confirmaciones): `nucleo.banco_id NOT NULL`; `banco.capacidad_max` se
-  mide en núcleos por banco.
+- **Jerarquía parque de fecundación → núcleo** (confirmado por la clienta
+  el 07/10): el núcleo está en un parque de fecundación, donde la celda se
+  introduce y la reina se fecunda. `nucleo.parque_id NOT NULL`;
+  `parque_fecundacion.capacidad_max` se mide en núcleos por parque. Los
+  parques pueden estar en distintos predios: `parque_fecundacion.ubicacion`
+  es texto simple por ahora. El **banco** es otra cosa (guarda las reinas
+  ya fecundadas y cosechadas) y se modela con la salida de reinas.
 - La **alícuota de IVA vive en el catálogo de ítems vendibles** (enum de
   `importes.py`), no en el cliente. Valor para reinas: pendiente de la
   clienta (21% o 10,5%); configurable, sin valor asumido.

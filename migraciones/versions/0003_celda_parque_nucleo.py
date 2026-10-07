@@ -1,4 +1,4 @@
-"""Celda como entidad central: madre, banco, nucleo y celda; fuera tanda_evento.
+"""Celda como entidad central: madre, parque, nucleo y celda; fuera tanda_evento.
 
 Alinea el esquema con docs/dominio.md (issue #26). La base no tiene datos de
 negocio, asi que no hace falta migrar datos: se dropea lo que no corresponde.
@@ -24,11 +24,11 @@ depends_on: str | Sequence[str] | None = None
 ROL_APP = "malka_app"
 
 # Tablas nuevas de negocio con los permisos minimos del rol de aplicacion.
-# Ninguna lleva DELETE: madre, banco y nucleo usan borrado logico (#30) y una
+# Ninguna lleva DELETE: madre, parque y nucleo usan borrado logico (#30) y una
 # celda nunca se borra, se cierra con un estado terminal (#28).
 PERMISOS_TABLAS_NUEVAS = {
     "madre": "SELECT, INSERT, UPDATE",
-    "banco": "SELECT, INSERT, UPDATE",
+    "parque_fecundacion": "SELECT, INSERT, UPDATE",
     "nucleo": "SELECT, INSERT, UPDATE",
     "celda": "SELECT, INSERT, UPDATE",
 }
@@ -160,28 +160,34 @@ def upgrade() -> None:
     )
     op.create_index("ix_tanda_tenant_madre", "tanda", ["tenant_id", "madre_id"])
 
-    # --- banco -> nucleo: una sola jerarquia de ubicacion ---
+    # --- parque de fecundacion -> nucleo ---
+    # El parque es donde la celda entra a un nucleo y la reina se fecunda. El
+    # banco (reinas ya fecundadas y cosechadas) es otra etapa y no entra aca:
+    # se modela con la salida de reinas.
     op.create_table(
-        "banco",
+        "parque_fecundacion",
         _id(),
         _tenant_id(),
         sa.Column("nombre", sa.Text(), nullable=False),
-        # Medida en nucleos por banco (#29).
+        # Los parques pueden estar en distintos predios. Texto simple por ahora;
+        # si hace falta, se normaliza en una tabla aparte.
+        sa.Column("ubicacion", sa.Text(), nullable=False),
+        # Medida en nucleos por parque (#29).
         sa.Column("capacidad_max", sa.Integer(), nullable=False),
         sa.Column("activo", sa.Boolean(), nullable=False, server_default=sa.true()),
         _creado_en(),
         _actualizado_en(),
-        sa.CheckConstraint("capacidad_max > 0", name="ck_banco_capacidad_max"),
-        sa.UniqueConstraint("tenant_id", "nombre", name="uq_banco_tenant_nombre"),
-        sa.UniqueConstraint("tenant_id", "id", name="uq_banco_tenant_id"),
+        sa.CheckConstraint("capacidad_max > 0", name="ck_parque_capacidad_max"),
+        sa.UniqueConstraint("tenant_id", "nombre", name="uq_parque_tenant_nombre"),
+        sa.UniqueConstraint("tenant_id", "id", name="uq_parque_tenant_id"),
     )
 
     op.create_table(
         "nucleo",
         _id(),
         _tenant_id(),
-        sa.Column("banco_id", postgresql.UUID(as_uuid=True), nullable=False),
-        # Ubicacion del nucleo dentro del banco.
+        sa.Column("parque_id", postgresql.UUID(as_uuid=True), nullable=False),
+        # Ubicacion del nucleo dentro del parque.
         sa.Column("fila", sa.Integer(), nullable=False),
         sa.Column("posicion", sa.Integer(), nullable=False),
         sa.Column("activo", sa.Boolean(), nullable=False, server_default=sa.true()),
@@ -189,14 +195,14 @@ def upgrade() -> None:
         _actualizado_en(),
         sa.CheckConstraint("fila > 0 AND posicion > 0", name="ck_nucleo_ubicacion"),
         sa.ForeignKeyConstraint(
-            ["tenant_id", "banco_id"],
-            ["banco.tenant_id", "banco.id"],
-            name="fk_nucleo_banco_mismo_tenant",
+            ["tenant_id", "parque_id"],
+            ["parque_fecundacion.tenant_id", "parque_fecundacion.id"],
+            name="fk_nucleo_parque_mismo_tenant",
             ondelete="RESTRICT",
         ),
-        # Una posicion del banco no puede tener dos nucleos (#29 responde 409).
+        # Una posicion del parque no puede tener dos nucleos (#29 responde 409).
         sa.UniqueConstraint(
-            "tenant_id", "banco_id", "fila", "posicion", name="uq_nucleo_ubicacion"
+            "tenant_id", "parque_id", "fila", "posicion", name="uq_nucleo_ubicacion"
         ),
         sa.UniqueConstraint("tenant_id", "id", name="uq_nucleo_tenant_id"),
     )
@@ -257,7 +263,7 @@ def downgrade() -> None:
     # Al borrar cada tabla se borran tambien sus indices, politicas y GRANT.
     op.drop_table("celda")
     op.drop_table("nucleo")
-    op.drop_table("banco")
+    op.drop_table("parque_fecundacion")
 
     op.drop_index("ix_tanda_tenant_madre", table_name="tanda")
     op.drop_constraint("fk_tanda_madre_mismo_tenant", "tanda", type_="foreignkey")
