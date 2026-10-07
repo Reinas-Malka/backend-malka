@@ -41,9 +41,13 @@ variable "presupuesto_mensual_usd" {
 }
 
 variable "email_alertas" {
-  description = "Email que recibe las alertas de presupuesto y (a futuro) de las alarmas de DLQ. Vacio = no se crea el presupuesto"
+  description = "Email que recibe las alertas de presupuesto y (a futuro) de las alarmas de DLQ. Obligatoria: sin ella terraform plan falla en vez de proponer destruir el presupuesto"
   type        = string
-  default     = ""
+
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.email_alertas))
+    error_message = "email_alertas tiene que ser una direccion de email valida (se carga con TF_VAR_email_alertas)."
+  }
 }
 
 variable "image_tag" {
