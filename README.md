@@ -256,6 +256,9 @@ El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No
 | `COLA_DOCUMENTOS_URL` | URL de la cola SQS de documentos (la carga Terraform) | — |
 | `COLA_INGESTA_URL` | URL de la cola SQS de ingesta (la carga Terraform) | — |
 | `DB_SECRET_NAME` | Secreto con la credencial de la base. En la API es el del rol de aplicación (`db/app`) | — |
+| `COGNITO_ISSUER` | Emisor esperado en los ID tokens (`iss`) | — |
+| `COGNITO_CLIENT_ID` | App client de la SPA: audiencia esperada (`aud`) | — |
+| `COGNITO_JWKS` | Ruta al JWKS versionado (no una URL; ver ADR 0010) | `app/jwks_cognito_dev.json` |
 
 En local no hace falta definirlas. En AWS las carga Terraform en la Lambda: `APP_VERSION` toma el valor de la variable `image_tag`.
 
@@ -411,9 +414,13 @@ El backend de estado se configura con `backend.hcl`, que **no está versionado**
 export AWS_PROFILE=malka
 cd infra
 terraform init -backend-config=backend.hcl
-terraform plan     # sobre main debe decir: No changes
-terraform apply
+terraform plan -var-file=dev.tfvars     # sobre main debe decir: No changes
+terraform apply -var-file=dev.tfvars
 ```
+
+`dev.tfvars` está versionado y trae las variables del entorno dev (entre
+ellas `email_alertas`, obligatoria desde el #76: sin el archivo, ni un plan
+de lectura corre).
 
 **Reglas de oro del equipo:**
 

@@ -7,4 +7,6 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .coverage
+# tfvars quedan fuera, salvo el dev.tfvars del equipo (ver infra/dev.tfvars)
 *.tfvars
+!infra/dev.tfvars

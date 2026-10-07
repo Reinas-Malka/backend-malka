@@ -16,9 +16,11 @@ from contextlib import contextmanager
 from functools import lru_cache
 from uuid import UUID
 
+from fastapi import Depends
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 
+from app.auth import Identidad, identidad_actual
 from app.config import obtener_url_base_de_datos
 
 # set_config(..., true) es exactamente SET LOCAL, pero acepta parametros: el
@@ -48,4 +50,16 @@ def sesion_de_tenant(tenant_id: UUID) -> Iterator[Session]:
     """
     with Session(obtener_motor()) as sesion, sesion.begin():
         sesion.execute(FIJAR_TENANT, {"tenant_id": str(tenant_id)})
+        yield sesion
+
+
+def obtener_sesion(
+    identidad: Identidad = Depends(identidad_actual),
+) -> Iterator[Session]:
+    """Dependencia de las rutas de negocio.
+
+    Sin un token valido con tenant, identidad_actual corta con 401 antes de
+    abrir ninguna conexion.
+    """
+    with sesion_de_tenant(identidad.tenant_id) as sesion:
         yield sesion
