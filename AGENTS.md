@@ -30,3 +30,14 @@ ADRs, gana el documento y el conflicto se reporta como issue.
 - `ruff format` + `ruff check` antes de pushear (el CI de calidad los exige).
 - Diagramas: el oficial es `docs/diagramas/arquitectura.png`;
   `generar_*.py` regenera la base.
+
+## Migraciones y ADRs: colgar del último
+
+- **Antes de crear una migración**, mirá cuál es la última revisión en
+  `main` (`grep -rn "^revision\|^down_revision" migraciones/versions/`) y
+  colgá de ahí con `down_revision`. Los números del nombre del archivo no
+  son los que Alembic usa: importa la cadena `revision`/`down_revision`.
+- **Dos migraciones colgando de la misma revisión dan dos cabezas** y
+  `alembic upgrade head` falla.
+- **ADRs, misma lógica**: numeración correlativa; el próximo arranca en el
+  número siguiente al último que esté en `main` (hoy, el 0010).

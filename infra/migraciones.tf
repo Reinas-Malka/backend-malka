@@ -84,6 +84,9 @@ resource "aws_lambda_function" "migraciones" {
       APP_ENVIRONMENT = var.environment
       APP_VERSION     = var.image_tag
       DB_SECRET_NAME  = aws_secretsmanager_secret.db_owner.name
+
+      # Para generar y sincronizar la clave del rol de la API.
+      DB_APP_SECRET_NAME = aws_secretsmanager_secret.db_app.name
     }
   }
 

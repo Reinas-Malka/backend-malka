@@ -4,7 +4,9 @@ La direccion de la base de datos se arma de dos formas:
 
 - En local: con la variable de entorno DATABASE_URL.
 - En AWS: con el secreto de Secrets Manager cuyo nombre esta en DB_SECRET_NAME.
-- Es el secreto que crea Terraform en infra/rds.tf (malka-suite-dev/db/owner).
+  La API usa el del rol de aplicacion (malka-suite-dev/db/app, sin
+  privilegios) y la Lambda de migraciones el del duenio de las tablas
+  (malka-suite-dev/db/owner).
 """
 
 from __future__ import annotations
