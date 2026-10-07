@@ -181,10 +181,13 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          UNIQUE (tenant_id, parque_id, fila, posicion)
     banco:               FUERA DE FASE 1 (almacena reinas ya fecundadas)
 
-    material:            unidad (texto corto, sin enum cerrado)
+    material:            nombre, unidad (texto corto, sin enum cerrado), activo
     movimiento_material: material_id, tipo (compra|consumo|ajuste),
-                         cantidad_con_signo, motivo
-                         → stock = SUM(cantidades), nunca una columna
+                         cantidad (con signo), tanda_id (solo en consumo),
+                         motivo, fecha
+                         → stock = SUM(cantidad), nunca una columna
+    item_vendible:       nombre, alicuota (enum de importes.py; default 21%,
+                         NO VERIFICADO), activo
 
 ### Notas al modelo (decisiones del 04/10, corregidas el 07/10)
 
