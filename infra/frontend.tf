@@ -137,6 +137,13 @@ output "frontend_url" {
   value       = "https://${aws_cloudfront_distribution.frontend.domain_name}"
 }
 
+# Lo usa el workflow de deploy del frontend como variable de repo
+# CLOUDFRONT_DISTRIBUTION_ID (ver deploy.yml de frontend-malka).
+output "frontend_distribution_id" {
+  description = "ID de la distribucion de CloudFront del frontend"
+  value       = aws_cloudfront_distribution.frontend.id
+}
+
 # Para VITE_COGNITO_DOMAIN del build del frontend: el dominio completo del
 # hosted UI, listo para usar.
 output "cognito_dominio" {
