@@ -116,6 +116,11 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 |---|---|---|
 | GET | `/health` | Liveness. Devuelve estado, versión, entorno y timestamp. |
 | GET | `/health/ready` | Readiness. Pensado para verificar dependencias (la verificación real contra la base queda pendiente). |
+| POST | `/api/v1/clientes` | Alta de cliente nacional o de exportación. Roles `admin` y `ventas`. 201, o 409 si el CUIT/tax id ya existe en el criadero. |
+| GET | `/api/v1/clientes` | Clientes activos del criadero, por nombre. `?incluir_inactivos=true` suma los dados de baja. Todos los roles. |
+| GET | `/api/v1/clientes/{id}` | Un cliente. 404 si no existe o es de otro criadero. Todos los roles. |
+| PATCH | `/api/v1/clientes/{id}` | Edición parcial; se valida el resultado completo. `{"activo": true}` reactiva. Roles `admin` y `ventas`. |
+| DELETE | `/api/v1/clientes/{id}` | Baja lógica (`activo = false`): el cliente sigue existiendo para sus pedidos y facturas. 204. Roles `admin` y `ventas`. |
 
 ```bash
 curl -s https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
@@ -153,7 +158,7 @@ Todos los errores responden con la misma forma, sin importar de dónde vengan:
 |---|---|---|
 | 409 | `conflicto` | `ConflictoError`: el pedido choca con el estado actual |
 | 422 | `validacion` | `ValidacionError` (regla de negocio) o datos mal formados. En este caso `details.campos` indica qué campo falló, sin devolver el valor recibido |
-| 404 / 405 | `no_encontrado` / `metodo_no_permitido` | Ruta o método inexistente |
+| 404 / 405 | `no_encontrado` / `metodo_no_permitido` | Ruta o método inexistente, o `NoEncontradoError`: el recurso no existe o es de otro criadero (RLS no lo deja ver, así que la respuesta es la misma) |
 | 500 | `error_interno` | Error inesperado. Se loguea con su traza; al cliente no le llega el detalle |
 
 En un endpoint, los errores se lanzan, no se arman a mano:
@@ -181,11 +186,16 @@ Los logs nunca incluyen headers, cuerpos ni tokens, y cualquier clave sensible (
 app/
 ├── main.py              # Aplicación FastAPI y handler que invoca Lambda
 ├── config.py            # Configuración de conexión a la base de datos
+├── db.py                # Sesión con el tenant fijado (SET LOCAL) para RLS
+├── auth.py              # Validación del ID token de Cognito y roles
 ├── migrar.py            # Handler de la Lambda de migraciones
 ├── errores.py           # Excepciones de dominio y forma única de errores
 ├── observabilidad.py    # request_id, middleware y logs JSON
 ├── contexto.py          # request_id del request en curso (contextvars)
-└── worker.py            # Handler que consume las colas SQS
+├── worker.py            # Handler que consume las colas SQS
+├── routers/             # Endpoints por módulo: permisos y conexión con el repositorio
+├── schemas/             # Contrato de la API (Pydantic): qué JSON entra y cuál sale
+└── services/            # Reglas de negocio y acceso a la base, sin FastAPI
 infra/
 ├── versions.tf          # Versiones de Terraform y providers; estado remoto en S3
 ├── main.tf              # Prefijo común de nombres, zonas y ARNs del modelo de Bedrock
@@ -471,6 +481,7 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 ### Pendientes conocidos
 
 - `/health/ready` todavía no consulta la base: responde OK sin verificar dependencias.
+- `POST /api/v1/clientes` todavía no acepta `Idempotency-Key`: llega con el #25.
 - `APP_VERSION` sigue fijo en `"latest"`: el commit desplegado se ve en el tag de la imagen en ECR y en el resumen de cada corrida de *Deploy*, pero todavía no en `/health`.
 - `terraform apply` sigue siendo manual, desde la máquina local.
 
