@@ -1,4 +1,4 @@
-"""Tabla cliente de la migracion 0004 contra un PostgreSQL real (#32).
+"""Tabla cliente de la migracion 0005 contra un PostgreSQL real (#32).
 
 Cubre el aislamiento por tenant (incluido el caso de fuga entre tenants que
 pide AGENTS.md) y las restricciones que la base repite de ClienteCrear. Esos

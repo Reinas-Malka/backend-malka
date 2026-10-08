@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.errores import ConflictoError, NoEncontradoError
 from app.schemas.clientes import ClienteActualizar, ClienteCrear, ClienteRespuesta
 
-# Nombre de la restriccion en la migracion 0004.
+# Nombre de la restriccion en la migracion 0005.
 CUIT_UNICO = "uq_cliente_tenant_cuit_o_tax_id"
 
 # Las consultas se escriben completas, sin armar SQL con f-strings: los valores

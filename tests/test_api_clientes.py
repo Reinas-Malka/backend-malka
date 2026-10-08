@@ -2,7 +2,7 @@
 
 Requests HTTP reales contra la app de produccion: token firmado (#21), sesion
 con el tenant del token (#19), validacion (schemas) y PostgreSQL con RLS
-(migracion 0004). Cubre tambien el repositorio, que no tiene tests propios.
+(migracion 0005). Cubre tambien el repositorio, que no tiene tests propios.
 """
 
 import uuid
