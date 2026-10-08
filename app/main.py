@@ -1,7 +1,7 @@
 """API de Malka Suite.
 
-Por ahora solo expone los endpoints de salud. El resto de los modulos del
-negocio se van agregando sobre esta misma aplicacion.
+Expone los endpoints de salud y los modulos del negocio, que se van
+agregando sobre esta misma aplicacion como routers.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
+from app.routers import clientes
 
 VERSION = os.getenv("APP_VERSION", "0.1.0")
 ENTORNO = os.getenv("APP_ENVIRONMENT", "dev")
@@ -27,6 +28,7 @@ app = FastAPI(
 
 registrar_manejadores(app)
 instalar_observabilidad(app)
+app.include_router(clientes.router)
 
 
 class Salud(BaseModel):

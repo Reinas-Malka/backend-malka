@@ -7,6 +7,7 @@ de app/errores.py, y su mensaje lo lee una persona: nunca incluye el CUIT.
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Self
 from uuid import UUID
 
@@ -54,6 +55,13 @@ class ClienteCrear(BaseModel):
     def pais_en_mayusculas(cls, valor: object) -> object:
         return valor.upper() if isinstance(valor, str) else valor
 
+    @field_validator("nombre", "cuit_o_tax_id")
+    @classmethod
+    def sin_caracteres_de_control(cls, valor: str) -> str:
+        if any(unicodedata.category(caracter) == "Cc" for caracter in valor):
+            raise ValueError("El texto no puede tener caracteres de control.")
+        return valor
+
     @model_validator(mode="after")
     def validar_segun_tipo(self) -> Self:
         if self.tipo == TipoCliente.NACIONAL:
@@ -77,6 +85,24 @@ class ClienteCrear(BaseModel):
                 )
             # El tax id del exterior es libre: no hay un formato comun.
         return self
+
+
+class ClienteActualizar(BaseModel):
+    """Cuerpo de PATCH /api/v1/clientes/{id}: solo los campos que cambian.
+
+    Las reglas no se repiten aca: el repositorio aplica los cambios sobre el
+    cliente guardado y valida el resultado completo con ClienteCrear.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    nombre: str | None = None
+    pais: str | None = None
+    tipo: TipoCliente | None = None
+    condicion_iva: CondicionIva | None = None
+    cuit_o_tax_id: str | None = None
+    # true reactiva un cliente desactivado con DELETE.
+    activo: bool | None = None
 
 
 class ClienteRespuesta(BaseModel):
