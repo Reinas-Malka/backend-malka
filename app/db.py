@@ -38,6 +38,10 @@ def obtener_motor() -> Engine:
         max_overflow=0,
         pool_pre_ping=True,
         pool_recycle=300,
+        # Sin esto, un error de la base incluye los valores de la consulta
+        # (CUIT, nombres) en el mensaje, y el log del 500 los guarda en
+        # CloudWatch (AGENTS.md, regla 7).
+        hide_parameters=True,
     )
 
 
