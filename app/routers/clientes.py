@@ -10,10 +10,12 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.auth import require_role
 from app.db import obtener_sesion
+from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
 from app.schemas.clientes import ClienteActualizar, ClienteCrear, ClienteRespuesta
 from app.services.ventas import repositorio_clientes
 
@@ -27,9 +29,15 @@ SOLO_ESCRITURA = [Depends(require_role("admin", "ventas"))]
     "", status_code=201, response_model=ClienteRespuesta, dependencies=SOLO_ESCRITURA
 )
 def crear_cliente(
-    datos: ClienteCrear, sesion: Session = Depends(obtener_sesion)
-) -> ClienteRespuesta:
-    return repositorio_clientes.crear(sesion, datos)
+    datos: ClienteCrear,
+    # Antes que la sesion: una clave mal formada no abre ninguna conexion.
+    pedido: PedidoIdempotente = Depends(pedido_idempotente),
+    sesion: Session = Depends(obtener_sesion),
+) -> JSONResponse:
+    # Con Idempotency-Key, un reintento devuelve el cliente ya creado (#25).
+    return responder_una_vez(
+        sesion, pedido, lambda: repositorio_clientes.crear(sesion, datos)
+    )
 
 
 @router.get("", response_model=list[ClienteRespuesta])
