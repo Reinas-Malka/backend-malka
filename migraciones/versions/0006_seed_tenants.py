@@ -17,19 +17,32 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 TENANTS = [
-    ("11111111-1111-4111-8111-111111111111", "Malka (criadero propio)"),
-    ("22222222-2222-4222-8222-222222222222", "Criadero socio B (demo)"),
-    ("33333333-3333-4333-8333-333333333333", "Criadero socio C (demo)"),
+    (
+        "11111111-1111-4111-8111-111111111111",
+        "Malka (criadero propio)",
+        "30-52879486-5",
+    ),
+    (
+        "22222222-2222-4222-8222-222222222222",
+        "Criadero socio B (demo)",
+        "30-64685868-2",
+    ),
+    (
+        "33333333-3333-4333-8333-333333333333",
+        "Criadero socio C (demo)",
+        "30-71234125-9",
+    ),
 ]
 
 
 def upgrade() -> None:
-    for tenant_id, nombre in TENANTS:
+    for tenant_id, nombre, cuit in TENANTS:
         op.execute(
             sa.text(
-                "INSERT INTO tenant (id, nombre) VALUES (CAST(:id AS uuid), :nombre) "
+                "INSERT INTO tenant (id, nombre, cuit) "
+                "VALUES (CAST(:id AS uuid), :nombre, :cuit) "
                 "ON CONFLICT (id) DO NOTHING"
-            ).bindparams(id=tenant_id, nombre=nombre)
+            ).bindparams(id=tenant_id, nombre=nombre, cuit=cuit)
         )
 
 
