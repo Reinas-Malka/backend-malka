@@ -84,6 +84,16 @@ class SinPermisoError(ErrorDeApi):
     codigo_por_defecto = "sin_permiso"
 
 
+class NoEncontradoError(ErrorDeApi):
+    """El recurso no existe, o es de otro criadero y RLS no lo deja ver (404).
+
+    Ejemplo: pedir un cliente por un id que no esta en el tenant del token.
+    """
+
+    status_code = 404
+    codigo_por_defecto = "no_encontrado"
+
+
 CODIGOS_HTTP = {
     400: "pedido_invalido",
     401: "no_autenticado",

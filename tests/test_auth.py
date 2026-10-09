@@ -6,15 +6,12 @@ se prueba que una firma ajena no pasa. No hace falta AWS ni red.
 """
 
 import io
-import json
 import secrets
 import time
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Depends, FastAPI
@@ -25,51 +22,14 @@ from app import auth, contexto, db
 from app.auth import Identidad, identidad_actual, obtener_config_cognito, require_role
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
+from tests.conftest import JWKS_PRODUCCION, TENANT, emitir
 
-ISSUER = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_PRUEBA"
-CLIENT_ID = "cliente-spa-de-prueba"
-KID = "clave-de-prueba"
-TENANT = "11111111-1111-4111-8111-111111111111"
+# El ID token de prueba y el JWKS con su clave viven en conftest.py: los
+# comparten los tests de los endpoints protegidos.
+pytestmark = pytest.mark.usefixtures("cognito")
 
-CLAVE = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 OTRA_CLAVE = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-JWKS_PRODUCCION = json.loads(auth.RUTA_JWKS.read_text(encoding="utf-8"))
 KID_REAL = JWKS_PRODUCCION["keys"][0]["kid"]
-
-
-@pytest.fixture(autouse=True)
-def cognito(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """El JWKS de produccion mas la clave de prueba, como si fuera del pool."""
-    publica = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(CLAVE.public_key()))
-    publica.update({"kid": KID, "alg": "RS256", "use": "sig"})
-    claves = jwt.PyJWKSet.from_dict({"keys": [*JWKS_PRODUCCION["keys"], publica]})
-    monkeypatch.setattr(auth, "CLAVES", claves)
-    monkeypatch.setenv("COGNITO_ISSUER", ISSUER)
-    monkeypatch.setenv("COGNITO_CLIENT_ID", CLIENT_ID)
-    obtener_config_cognito.cache_clear()
-    yield
-    obtener_config_cognito.cache_clear()
-
-
-def emitir(
-    clave: Any = CLAVE, algoritmo: str = "RS256", kid: str = KID, **cambios: Any
-) -> str:
-    """Un ID token como los de Cognito; cada test cambia lo que quiere probar."""
-    ahora = int(time.time())
-    claims: dict[str, Any] = {
-        "sub": "usuario-1",
-        "iss": ISSUER,
-        "aud": CLIENT_ID,
-        "token_use": "id",
-        "iat": ahora,
-        "exp": ahora + 3600,
-        "custom:tenant_id": TENANT,
-        "cognito:groups": ["admin"],
-    }
-    claims.update(cambios)
-    claims = {nombre: valor for nombre, valor in claims.items() if valor is not None}
-    return jwt.encode(claims, clave, algorithm=algoritmo, headers={"kid": kid})
 
 
 def crear_app() -> FastAPI:
