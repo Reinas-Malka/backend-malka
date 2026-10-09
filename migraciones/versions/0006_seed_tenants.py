@@ -6,11 +6,15 @@ la tabla tenant, el primer INSERT de negocio revienta por la FK
 (descubierto en vivo el 09/10). Idempotente: ON CONFLICT DO NOTHING.
 """
 
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+
 revision: str = "0006"
 down_revision: str | None = "0005"
-
-from alembic import op
-import sqlalchemy as sa
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 TENANTS = [
     ("11111111-1111-4111-8111-111111111111", "Malka (criadero propio)"),
