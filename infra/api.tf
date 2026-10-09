@@ -54,6 +54,15 @@ resource "aws_apigatewayv2_route" "api_v1" {
   target    = "integrations/${aws_apigatewayv2_integration.lambda_api.id}"
 }
 
+# El auto-preflight del cors_configuration solo responde donde existe una
+# ruta explicita para OPTIONS (ANY no lo cubre: verificado en vivo, 405).
+# Con CORS configurado el gateway responde 204 solo, sin invocar la Lambda.
+resource "aws_apigatewayv2_route" "api_v1_options" {
+  api_id    = aws_apigatewayv2_api.principal.id
+  route_key = "OPTIONS /api/v1/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_api.id}"
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.principal.id
   name        = "$default"
