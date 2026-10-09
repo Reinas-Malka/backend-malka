@@ -43,6 +43,17 @@ resource "aws_apigatewayv2_route" "health_ready" {
   target    = "integrations/${aws_apigatewayv2_integration.lambda_api.id}"
 }
 
+# Catch-all de la version de la API: toda la logica de ruteo la decide
+# FastAPI dentro de la Lambda; el gateway solo enruta /health explícitos
+# (documentados arriba) y el resto del prefijo versionado. Sin esta ruta,
+# cualquier endpoint nuevo (p. ej. /api/v1/clientes, #87) da 404 del gateway
+# aunque el codigo y el deploy esten perfectos.
+resource "aws_apigatewayv2_route" "api_v1" {
+  api_id    = aws_apigatewayv2_api.principal.id
+  route_key = "ANY /api/v1/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_api.id}"
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.principal.id
   name        = "$default"
