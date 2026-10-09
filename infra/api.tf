@@ -43,23 +43,18 @@ resource "aws_apigatewayv2_route" "health_ready" {
   target    = "integrations/${aws_apigatewayv2_integration.lambda_api.id}"
 }
 
-# Catch-all de la version de la API: toda la logica de ruteo la decide
-# FastAPI dentro de la Lambda; el gateway solo enruta /health explícitos
-# (documentados arriba) y el resto del prefijo versionado. Sin esta ruta,
-# cualquier endpoint nuevo (p. ej. /api/v1/clientes, #87) da 404 del gateway
-# aunque el codigo y el deploy esten perfectos.
-resource "aws_apigatewayv2_route" "api_v1" {
-  api_id    = aws_apigatewayv2_api.principal.id
-  route_key = "ANY /api/v1/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_api.id}"
+# Rutas por metodo real del prefijo versionado. JAMAS una ruta ANY ni
+# OPTIONS: ANY arrastra el preflight a la Lambda (FastAPI responde 405) y
+# con OPTIONS sin ruta que la matchee, el cors_configuration del gateway
+# contesta el preflight 204 solo, sin invocar nada (verificado en vivo).
+locals {
+  metodos_api_v1 = toset(["GET", "POST", "PUT", "PATCH", "DELETE"])
 }
 
-# El auto-preflight del cors_configuration solo responde donde existe una
-# ruta explicita para OPTIONS (ANY no lo cubre: verificado en vivo, 405).
-# Con CORS configurado el gateway responde 204 solo, sin invocar la Lambda.
-resource "aws_apigatewayv2_route" "api_v1_options" {
+resource "aws_apigatewayv2_route" "api_v1" {
+  for_each  = local.metodos_api_v1
   api_id    = aws_apigatewayv2_api.principal.id
-  route_key = "OPTIONS /api/v1/{proxy+}"
+  route_key = "${each.key} /api/v1/{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_api.id}"
 }
 
