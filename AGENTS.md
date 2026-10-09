@@ -7,8 +7,9 @@ ADRs, gana el documento y el conflicto se reporta como issue.
 
 ## Reglas duras
 
-1. **Ningún cambio llega a `main` sin PR** con CI verde y revisión de otra
-   persona. El autor no auto-aprueba.
+1. **Ningún cambio llega a `main` sin PR con CI verde** (checks
+   obligatorios). La aprobación humana se exige solo para `infra/`
+   (CODEOWNERS): el CI es la protección real del código (ADR 0013).
 2. **`terraform apply` solo desde `main`** con el código ya pusheado (ADR 0007).
    Nunca desde ramas locales ni sin pushear.
 3. **Cero secretos en el repo** (público): sin claves AWS, sin contraseñas, sin
