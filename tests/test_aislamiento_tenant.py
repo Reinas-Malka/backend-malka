@@ -37,6 +37,7 @@ ORDEN = (
     "movimiento_material",
     "item_vendible",
     "cliente",
+    "idempotencia",
 )
 
 Filas = dict[str, uuid.UUID]
@@ -108,6 +109,12 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         "INSERT INTO cliente (nombre, pais, tipo, condicion_iva, cuit_o_tax_id) "
         "VALUES ('Bienenzucht GmbH', 'DE', 'exportacion', 'cliente_exterior', "
         "'DE123456789') RETURNING id",
+    )
+    # La misma clave en los dos criaderos: es unica por tenant, no global (#25).
+    insertar(
+        "idempotencia",
+        "INSERT INTO idempotencia (clave, hash_request) "
+        "VALUES ('clave-de-prueba', 'huella') RETURNING id",
     )
     return filas
 
