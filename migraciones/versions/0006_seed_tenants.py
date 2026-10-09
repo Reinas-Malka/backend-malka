@@ -27,7 +27,7 @@ def upgrade() -> None:
     for tenant_id, nombre in TENANTS:
         op.execute(
             sa.text(
-                "INSERT INTO tenant (id, nombre) VALUES (:id, :nombre) "
+                "INSERT INTO tenant (id, nombre) VALUES (CAST(:id AS uuid), :nombre) "
                 "ON CONFLICT (id) DO NOTHING"
             ).bindparams(id=tenant_id, nombre=nombre)
         )
@@ -36,5 +36,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     for tenant_id, _ in TENANTS:
         op.execute(
-            sa.text("DELETE FROM tenant WHERE id = :id").bindparams(id=tenant_id)
+            sa.text("DELETE FROM tenant WHERE id = CAST(:id AS uuid)").bindparams(
+                id=tenant_id
+            )
         )
