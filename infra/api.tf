@@ -9,10 +9,11 @@ resource "aws_apigatewayv2_api" "principal" {
 
   # API Gateway responde el preflight; no agregar CORSMiddleware en FastAPI.
   cors_configuration {
-    allow_origins  = local.origenes_reales
-    allow_methods  = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    allow_headers  = ["content-type", "authorization"]
-    expose_headers = ["x-request-id"]
+    allow_origins = local.origenes_reales
+    allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    # idempotency-key: sin esto el navegador corta el preflight de los POST (#25).
+    allow_headers  = ["content-type", "authorization", "idempotency-key"]
+    expose_headers = ["x-request-id", "idempotent-replayed"]
     max_age        = 3600
   }
 
