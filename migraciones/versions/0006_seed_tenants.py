@@ -47,7 +47,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for tenant_id, _ in TENANTS:
+    for tenant_id, _, _ in TENANTS:
         op.execute(
             sa.text("DELETE FROM tenant WHERE id = CAST(:id AS uuid)").bindparams(
                 id=tenant_id
