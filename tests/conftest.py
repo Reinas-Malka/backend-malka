@@ -216,7 +216,7 @@ def con_motor_app(motor_app: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
 ISSUER = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_PRUEBA"
 CLIENT_ID = "cliente-spa-de-prueba"
 KID = "clave-de-prueba"
-TENANT = "11111111-1111-4111-8111-111111111111"
+TENANT = "aaaaaaaa-0000-4000-8000-000000000001"
 
 CLAVE = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
