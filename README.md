@@ -178,6 +178,35 @@ fields @timestamp, route, status, latency_ms
 
 Los logs nunca incluyen headers, cuerpos ni tokens, y cualquier clave sensible (`authorization`, `token`, `cuit`, `cuil`, `dni`, `cbu`, etc.) se reemplaza por `[REDACTADO]`.
 
+### Idempotencia
+
+Los POST que crean recursos aceptan el header `Idempotency-Key` (#25). El frontend genera un UUID nuevo por cada operación y manda **el mismo** en cada reintento:
+
+| Caso | Respuesta |
+|---|---|
+| Primera vez con esa clave | La normal (por ejemplo, 201 con el recurso creado) |
+| Misma clave y mismo pedido, dentro de las 24 h | La respuesta original guardada, sin crear nada, con el header `Idempotent-Replayed: true` |
+| Misma clave con otro pedido (otro cuerpo u otra ruta) | 409 `idempotency_key_reutilizada` |
+| Misma clave pasadas las 24 h | Se trata como nueva |
+| Clave mal formada (vacía, con espacios o de más de 255 caracteres) | 422 `idempotency_key_invalida` |
+| Sin header | Un POST común, sin protección contra duplicados |
+
+La clave es por criadero (dos criaderos pueden usar el mismo valor) y se guarda en la tabla `idempotencia` (migración 0007), en la misma transacción que crea el recurso: si el pedido falla, la clave no queda usada y el reintento puede volver a intentar. Dos pedidos simultáneos con la misma clave crean un solo recurso: el segundo espera al primero y repite su respuesta.
+
+En un endpoint nuevo:
+
+```python
+from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
+
+@router.post("", status_code=201, response_model=TandaRespuesta)
+def crear_tanda(
+    datos: TandaCrear,
+    pedido: PedidoIdempotente = Depends(pedido_idempotente),
+    sesion: Session = Depends(obtener_sesion),
+) -> JSONResponse:
+    return responder_una_vez(sesion, pedido, lambda: repositorio_tandas.crear(sesion, datos))
+```
+
 ---
 
 ## Estructura del proyecto
@@ -189,6 +218,7 @@ app/
 ├── db.py                # Sesión con el tenant fijado (SET LOCAL) para RLS
 ├── auth.py              # Validación del ID token de Cognito y roles
 ├── migrar.py            # Handler de la Lambda de migraciones
+├── idempotencia.py      # Idempotency-Key en los POST que crean recursos
 ├── errores.py           # Excepciones de dominio y forma única de errores
 ├── observabilidad.py    # request_id, middleware y logs JSON
 ├── contexto.py          # request_id del request en curso (contextvars)
