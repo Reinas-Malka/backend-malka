@@ -27,6 +27,10 @@ from app.config import obtener_url_base_de_datos
 # tenant viaja como valor ligado y nunca se concatena al SQL.
 FIJAR_TENANT = text("SELECT set_config('app.tenant_id', :tenant_id, true)")
 
+# Si RDS no responde, el default de TCP tarda minutos: mucho mas que los 29 s
+# de API Gateway. Con este tope el request falla rapido y con un error claro.
+CONNECT_TIMEOUT_S = 5
+
 
 @lru_cache(maxsize=1)
 def obtener_motor() -> Engine:
@@ -42,6 +46,7 @@ def obtener_motor() -> Engine:
         # (CUIT, nombres) en el mensaje, y el log del 500 los guarda en
         # CloudWatch (AGENTS.md, regla 7).
         hide_parameters=True,
+        connect_args={"connect_timeout": CONNECT_TIMEOUT_S},
     )
 
 
