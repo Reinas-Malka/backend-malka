@@ -1,6 +1,7 @@
 # Dominio de Malka Suite — reglas confirmadas por la clienta
 
-> Fuente de verdad del negocio. Confirmado por la clienta el 2 y 4/10/2026.
+> Fuente de verdad del negocio. Confirmado por la clienta el 2, 4, 7 y
+> 11/10/2026.
 > Si algo acá contradice código o ADRs existentes, **gana este documento** y la
 > contradicción se reporta como issue: no se "corrige" de forma silenciosa.
 
@@ -29,7 +30,8 @@ según la condición fiscal del CLIENTE:
   es coherente y (b) calcular el pedido interno (ADR 0008). Derivación
   esperada: exterior → E, responsable inscripto → A, resto → B.
 - Moneda: **ARS** en ventas nacionales; **USD o EUR** en exportación.
-  `tipo_cambio` es NULL cuando la moneda es ARS.
+  `tipo_cambio` es NULL cuando la moneda es ARS. Confirmado el 11/10: **no
+  hay ventas nacionales en moneda extranjera** y no se usan otras monedas.
 - Facturan dos personas de la cabaña bajo **un solo CUIT** → no hay tabla de
   emisores; el CUIT es atributo del tenant.
 - `punto_venta` y `numero` se transcriben del comprobante.
@@ -58,6 +60,46 @@ Seis documentos por envío, cinco emisores distintos:
   Se transcribe junto con el número y queda inmutable.
 - La entidad central es el **embarque**: el valor del sistema es responder
   "¿tengo los 6 documentos de este envío?". Esa es la demo del 30/11.
+
+### Modalidades de envío (confirmado 11/10)
+
+- **Directo** (Latinoamérica): EZE → aeropuerto del país de destino; lo
+  recibe el cliente. `embarque.destino_pais` = país del cliente.
+- **Consolidado** (Europa, operatoria propia de la cabaña): EZE → aeropuerto
+  hub en Europa; lo retira alguien de la empresa y lo redistribuye en
+  sub-envíos a aeropuertos donde retiran los apicultores, o se retira en el
+  local. `embarque.destino_pais` = país del hub.
+- En Europa **el director vende directamente a cada apicultor** (pasa 3 meses
+  allá): cada apicultor es un cliente de exportación y **cada pedido es una
+  exportación**, con `destino_pais` = país del apicultor, no el del hub.
+- **Los sub-envíos y puntos de retiro NO se registran en el sistema**: la
+  redistribución ocurre por fuera. Si algún día se modelan, tiene que ser
+  una capacidad **genérica y opcional** que cualquier tenant pueda ignorar;
+  **nunca lógica condicionada a un tenant** (los servicios no filtran ni
+  ramifican por tenant).
+- **Incoterm: opcional**, lista cerrada de los **11 de Incoterms 2020**
+  (EXW, FCA, CPT, CIP, DAP, DPU, DDP, FAS, FOB, CFR, CIF). Tiene sentido en
+  los envíos directos; en los consolidados queda vacío. **No es requisito
+  para que un pedido sea de exportación** → contradice el ADR 0006, que pide
+  incoterm y destino: reportado para enmendar el ADR.
+
+## Pedidos (confirmado 11/10)
+
+- La cabaña **vende solo reinas**. Hay **3 razas**, pero son **datos** de la
+  tabla `raza` de cada tenant, no un enum ni un CHECK: otro criadero puede
+  tener otras.
+- Cada línea del pedido lleva **ítem vendible y raza, ambos obligatorios**.
+  El catálogo no conoce la raza: la combinación ítem × raza se define en la
+  línea. No hay lista de precios: el precio se carga en la línea.
+- La línea **copia `alicuota` y `precio_unitario`** al crearse: un cambio
+  posterior del catálogo no recalcula pedidos existentes.
+- Moneda del pedido según el tipo de cliente: nacional → ARS; exportación →
+  USD o EUR. El pedido **no guarda tipo de cambio** (lo fija ARCA al
+  facturar, después del pedido).
+- Exportación: cliente de tipo exportación + **`destino_pais` obligatorio**
+  (ISO 3166-1 alfa-2, distinto de `AR`). Incoterm opcional (ver arriba).
+- Estados: `borrador → reservado → entregado | cancelado`. El alta crea
+  siempre en `borrador`; las transiciones las valida el servicio (#36).
 
 ## Ciclo de cría — dos ejes temporales
 
@@ -186,8 +228,19 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          cantidad (con signo), tanda_id (solo en consumo),
                          motivo, fecha
                          → stock = SUM(cantidad), nunca una columna
-    item_vendible:       nombre, alicuota (enum de importes.py; default 21%,
-                         NO VERIFICADO), activo
+    item_vendible:       nombre, alicuota (enum de importes.py; default 21%),
+                         activo
+
+    pedido:              cliente_id, estado (borrador|reservado|entregado|
+                         cancelado), moneda (ARS|USD|EUR), destino_pais
+                         (NULL en nacional), incoterm (opcional, 11 de 2020),
+                         fecha_entrega_solicitada
+                         → exportación ⇔ cliente de tipo exportación
+    pedido_item:         pedido_id, item_vendible_id NOT NULL,
+                         raza_id NOT NULL, cantidad, precio_unitario,
+                         alicuota (copiada del ítem al crear)
+                         → neto, IVA y total se calculan (ADR 0008), no se
+                           guardan
 
 ### Notas al modelo (decisiones del 04/10, corregidas el 07/10)
 
@@ -207,9 +260,8 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
     momento posterior del ciclo, NO un contenedor de núcleos. **Fuera del
     alcance de fase 1.**
 - La **alícuota de IVA vive en el catálogo de ítems vendibles** (enum de
-  `importes.py`), no en el cliente. Valor para reinas: **default 21%,
-  NO VERIFICADO** (la clienta respondió "creo"; confirmar con una factura
-  vieja) y sigue configurable por ítem.
+  `importes.py`), no en el cliente. Valor para reinas: **21%, confirmado
+  el 11/10** (el 04/10 había respondido "creo"); sigue configurable por ítem.
 - **`punto_venta` y `numero` son DOS enteros separados**, nunca el string
   impreso concatenado: `0001-00000045` es la REPRESENTACIÓN IMPRESA. El
   padding (4-5 y 8 dígitos) se arma al mostrar. Guardar el string
