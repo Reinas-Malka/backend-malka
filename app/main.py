@@ -9,13 +9,14 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from mangum import Mangum
 from pydantic import BaseModel
 
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
 from app.routers import clientes
+from app.salud import Estado, verificar_dependencias
 
 VERSION = os.getenv("APP_VERSION", "0.1.0")
 ENTORNO = os.getenv("APP_ENVIRONMENT", "dev")
@@ -58,15 +59,33 @@ def health() -> Salud:
     )
 
 
-@app.get("/health/ready", response_model=Disponibilidad, tags=["salud"])
-def ready() -> Disponibilidad:
-    """Prueba de disponibilidad.
+@app.get(
+    "/health/ready",
+    response_model=Disponibilidad,
+    tags=["salud"],
+    responses={
+        503: {"model": Disponibilidad, "description": "Alguna dependencia falla"}
+    },
+)
+def ready(response: Response) -> Disponibilidad:
+    """Prueba de disponibilidad (#23).
 
-    Cuando exista la base de datos, aca se verifica la conexion antes de
-    declarar que la API esta en condiciones de recibir trafico.
+    Verifica de verdad cada dependencia: 200 si todas responden, 503 si alguna
+    falla. El smoke test del deploy (#10) usa este endpoint, asi que un deploy
+    que no llega a la base queda en rojo.
     """
-    dependencias = {"base_de_datos": "todavia no configurada"}
-    return Disponibilidad(estado="ok", dependencias=dependencias)
+    dependencias = verificar_dependencias()
+    sanas = all(estado == Estado.OK for estado in dependencias.values())
+
+    if not sanas:
+        response.status_code = 503
+    # Que nadie en el camino (navegador, proxy) guarde un estado viejo.
+    response.headers["Cache-Control"] = "no-store"
+
+    return Disponibilidad(
+        estado="ok" if sanas else "degradado",
+        dependencias={nombre: estado.value for nombre, estado in dependencias.items()},
+    )
 
 
 handler = Mangum(app, lifespan="off")
