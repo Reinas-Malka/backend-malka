@@ -38,20 +38,28 @@ def obtener_url_base_de_datos() -> URL:
             "o DB_SECRET_NAME (AWS)."
         )
 
-    # boto3 viene incluido en la imagen oficial de Lambda, pero no en local ni
-    # en el CI. Se carga solo cuando hace falta.
     boto3 = importlib.import_module("boto3")
-    cliente = boto3.client("secretsmanager")
-    respuesta = cliente.get_secret_value(SecretId=nombre_secreto)
-    secreto = json.loads(respuesta["SecretString"])
-
-    return URL.create(
-        drivername="postgresql+psycopg",
-        username=secreto["username"],
-        password=secreto["password"],
-        host=secreto["host"],
-        port=int(secreto["port"]),
-        database=secreto["dbname"],
-        # RDS exige conexiones cifradas (rds.force_ssl = 1 en infra/rds.tf).
-        query={"sslmode": "require"},
+    botocore_config = importlib.import_module("botocore.config")
+    cliente = boto3.client(
+        "secretsmanager",
+        config=botocore_config.Config(
+            connect_timeout=3, read_timeout=3, retries={"max_attempts": 2}
+        ),
     )
+    try:
+        respuesta = cliente.get_secret_value(SecretId=nombre_secreto)
+        secreto = json.loads(respuesta["SecretString"])
+        return URL.create(
+            drivername="postgresql+psycopg",
+            username=secreto["username"],
+            password=secreto["password"],
+            host=secreto["host"],
+            port=int(secreto["port"]),
+            database=secreto["dbname"],
+            query={"sslmode": "require"},
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"No se pudo leer el secreto de la base indicado en DB_SECRET_NAME "
+            f"({nombre_secreto}): {type(error).__name__}."
+        ) from error
