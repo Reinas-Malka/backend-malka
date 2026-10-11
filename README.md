@@ -115,7 +115,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/health` | Liveness. Devuelve estado, versión, entorno y timestamp. |
-| GET | `/health/ready` | Readiness. Pensado para verificar dependencias (la verificación real contra la base queda pendiente). |
+| GET | `/health/ready` | Readiness: lee el secreto, se conecta a RDS y ejecuta `SELECT 1`. 200 si todo responde, 503 si alguna dependencia falla. |
 | POST | `/api/v1/clientes` | Alta de cliente nacional o de exportación. Roles `admin` y `ventas`. 201, o 409 si el CUIT/tax id ya existe en el criadero. |
 | GET | `/api/v1/clientes` | Clientes activos del criadero, por nombre. `?incluir_inactivos=true` suma los dados de baja. Todos los roles. |
 | GET | `/api/v1/clientes/{id}` | Un cliente. 404 si no existe o es de otro criadero. Todos los roles. |
@@ -126,6 +126,16 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 curl -s https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
 # {"estado":"ok","version":"latest","entorno":"dev","momento":"..."}
 ```
+
+`/health/ready` verifica la base de verdad (#23). Solo informa el estado de cada dependencia, nunca el host, el usuario ni la clave; el motivo de una falla queda en CloudWatch como `dependencia no disponible`, con el tipo de error:
+
+```bash
+curl -s https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health/ready
+# 200 {"estado":"ok","dependencias":{"base_de_datos":"ok"}}
+# 503 {"estado":"degradado","dependencias":{"base_de_datos":"error"}}
+```
+
+Cada paso tiene un tope para responder 503 en segundos y no un timeout de API Gateway (29 s): Secrets Manager 3 s por intento (2 intentos), conexión 5 s, consulta 2 s. El secreto se lee una vez por contenedor de Lambda y queda en caché.
 
 ### CORS
 
@@ -178,35 +188,6 @@ fields @timestamp, route, status, latency_ms
 
 Los logs nunca incluyen headers, cuerpos ni tokens, y cualquier clave sensible (`authorization`, `token`, `cuit`, `cuil`, `dni`, `cbu`, etc.) se reemplaza por `[REDACTADO]`.
 
-### Idempotencia
-
-Los POST que crean recursos aceptan el header `Idempotency-Key` (#25). El frontend genera un UUID nuevo por cada operación y manda **el mismo** en cada reintento:
-
-| Caso | Respuesta |
-|---|---|
-| Primera vez con esa clave | La normal (por ejemplo, 201 con el recurso creado) |
-| Misma clave y mismo pedido, dentro de las 24 h | La respuesta original guardada, sin crear nada, con el header `Idempotent-Replayed: true` |
-| Misma clave con otro pedido (otro cuerpo u otra ruta) | 409 `idempotency_key_reutilizada` |
-| Misma clave pasadas las 24 h | Se trata como nueva |
-| Clave mal formada (vacía, con espacios o de más de 255 caracteres) | 422 `idempotency_key_invalida` |
-| Sin header | Un POST común, sin protección contra duplicados |
-
-La clave es por criadero (dos criaderos pueden usar el mismo valor) y se guarda en la tabla `idempotencia` (migración 0007), en la misma transacción que crea el recurso: si el pedido falla, la clave no queda usada y el reintento puede volver a intentar. Dos pedidos simultáneos con la misma clave crean un solo recurso: el segundo espera al primero y repite su respuesta.
-
-En un endpoint nuevo:
-
-```python
-from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
-
-@router.post("", status_code=201, response_model=TandaRespuesta)
-def crear_tanda(
-    datos: TandaCrear,
-    pedido: PedidoIdempotente = Depends(pedido_idempotente),
-    sesion: Session = Depends(obtener_sesion),
-) -> JSONResponse:
-    return responder_una_vez(sesion, pedido, lambda: repositorio_tandas.crear(sesion, datos))
-```
-
 ---
 
 ## Estructura del proyecto
@@ -218,7 +199,7 @@ app/
 ├── db.py                # Sesión con el tenant fijado (SET LOCAL) para RLS
 ├── auth.py              # Validación del ID token de Cognito y roles
 ├── migrar.py            # Handler de la Lambda de migraciones
-├── idempotencia.py      # Idempotency-Key en los POST que crean recursos
+├── salud.py             # Chequeo de dependencias de /health/ready
 ├── errores.py           # Excepciones de dominio y forma única de errores
 ├── observabilidad.py    # request_id, middleware y logs JSON
 ├── contexto.py          # request_id del request en curso (contextvars)
@@ -510,7 +491,6 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 
 ### Pendientes conocidos
 
-- `/health/ready` todavía no consulta la base: responde OK sin verificar dependencias.
 - `POST /api/v1/clientes` todavía no acepta `Idempotency-Key`: llega con el #25.
 - `APP_VERSION` sigue fijo en `"latest"`: el commit desplegado se ve en el tag de la imagen en ECR y en el resumen de cada corrida de *Deploy*, pero todavía no en `/health`.
 - `terraform apply` sigue siendo manual, desde la máquina local.
