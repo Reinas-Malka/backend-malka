@@ -37,6 +37,8 @@ ORDEN = (
     "movimiento_material",
     "item_vendible",
     "cliente",
+    "pedido",
+    "pedido_item",
     "idempotencia",
 )
 
@@ -109,6 +111,22 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         "INSERT INTO cliente (nombre, pais, tipo, condicion_iva, cuit_o_tax_id) "
         "VALUES ('Bienenzucht GmbH', 'DE', 'exportacion', 'cliente_exterior', "
         "'DE123456789') RETURNING id",
+    )
+    insertar(
+        "pedido",
+        "INSERT INTO pedido (cliente_id, moneda, destino_pais, "
+        "fecha_entrega_solicitada) "
+        "VALUES (:cliente, 'EUR', 'DE', '2026-11-30') RETURNING id",
+        cliente=filas["cliente"],
+    )
+    insertar(
+        "pedido_item",
+        "INSERT INTO pedido_item (pedido_id, item_vendible_id, raza_id, "
+        "cantidad, precio_unitario, alicuota) "
+        "VALUES (:pedido, :item, :raza, 10, 35.00, 0.21) RETURNING id",
+        pedido=filas["pedido"],
+        item=filas["item_vendible"],
+        raza=filas["raza"],
     )
     # La misma clave en los dos criaderos: es unica por tenant, no global (#25).
     insertar(
