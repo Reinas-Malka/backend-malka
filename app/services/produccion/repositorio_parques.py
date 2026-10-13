@@ -48,14 +48,12 @@ OBTENER = text(
     "FROM parque p WHERE p.id = :id"
 )
 
-# FOR UPDATE bloquea el parque: el alta de un nucleo (repositorio_nucleos)
-# toma el mismo bloqueo, asi el conteo de nucleos no cambia mientras se edita.
-OBTENER_PARA_EDITAR = text(
-    "SELECT p.id, p.nombre, p.ubicacion, p.capacidad_max, p.activo, "
-    "(SELECT count(*) FROM nucleo n WHERE n.parque_id = p.id AND n.activo) "
-    "AS nucleos_activos "
-    "FROM parque p WHERE p.id = :id FOR UPDATE OF p"
-)
+# El bloqueo y el conteo van en consultas separadas. En una sola, PostgreSQL
+# cuenta los nucleos con la foto de antes de esperar el bloqueo y no ve el
+# alta que se estaba esperando; en READ COMMITTED, la consulta siguiente ya
+# ve lo confirmado. El alta de nucleos (repositorio_nucleos) toma el mismo
+# bloqueo, asi el conteo no cambia mientras se edita el parque.
+BLOQUEAR = text("SELECT id FROM parque WHERE id = :id FOR UPDATE")
 
 ACTUALIZAR = text(
     "UPDATE parque SET nombre = :nombre, ubicacion = :ubicacion, "
@@ -120,6 +118,13 @@ def obtener(sesion: Session, parque_id: UUID) -> ParqueRespuesta:
     return _a_respuesta(fila)
 
 
+def bloquear(sesion: Session, parque_id: UUID) -> ParqueRespuesta:
+    """Bloquea el parque y lo devuelve con sus nucleos activos ya contados."""
+    if sesion.execute(BLOQUEAR, {"id": parque_id}).one_or_none() is None:
+        raise no_encontrado()
+    return obtener(sesion, parque_id)
+
+
 def _guardar(
     sesion: Session, parque_id: UUID, datos: ParqueCrear, *, activo: bool
 ) -> ParqueRespuesta:
@@ -136,10 +141,7 @@ def _guardar(
 def actualizar(
     sesion: Session, parque_id: UUID, cambios: ParqueActualizar
 ) -> ParqueRespuesta:
-    fila = sesion.execute(OBTENER_PARA_EDITAR, {"id": parque_id}).one_or_none()
-    if fila is None:
-        raise no_encontrado()
-    actual = _a_respuesta(fila)
+    actual = bloquear(sesion, parque_id)
     validado = validar_cambios(ParqueCrear, actual, cambios)
     activo = actual.activo if cambios.activo is None else cambios.activo
 
@@ -156,10 +158,7 @@ def actualizar(
 
 def desactivar(sesion: Session, parque_id: UUID) -> None:
     """Borrado logico, solo si el parque no tiene nucleos activos."""
-    fila = sesion.execute(OBTENER_PARA_EDITAR, {"id": parque_id}).one_or_none()
-    if fila is None:
-        raise no_encontrado()
-    actual = _a_respuesta(fila)
+    actual = bloquear(sesion, parque_id)
     if actual.nucleos_activos > 0:
         _con_nucleos(actual.nucleos_activos)
     datos = ParqueCrear.model_validate(

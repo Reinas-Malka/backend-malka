@@ -13,7 +13,8 @@ a usar esa posicion se reactiva el nucleo que la ocupa.
 sigue y la respuesta trae la advertencia parque_al_limite (#29).
 
 Para que dos altas simultaneas no pasen la capacidad, se bloquea el parque
-(FOR UPDATE) antes de contar sus nucleos.
+(FOR UPDATE) y recien despues, en otra consulta, se cuentan sus nucleos
+(tests/test_concurrencia_parque.py).
 """
 
 from __future__ import annotations
@@ -35,13 +36,6 @@ from app.schemas.produccion import (
 )
 from app.services.produccion import repositorio_parques
 from app.services.repositorio import escribir, validar_cambios
-
-BLOQUEAR_PARQUE = text(
-    "SELECT p.capacidad_max, p.activo, "
-    "(SELECT count(*) FROM nucleo n WHERE n.parque_id = p.id AND n.activo) "
-    "AS nucleos_activos "
-    "FROM parque p WHERE p.id = :id FOR UPDATE OF p"
-)
 
 INSERTAR = text(
     "INSERT INTO nucleo (parque_id, fila, posicion) "
@@ -104,9 +98,9 @@ def _reservar_lugar(sesion: Session, parque_id: UUID) -> list[Advertencia]:
 
     Devuelve la advertencia si, con ese nucleo, el parque queda lleno.
     """
-    parque = sesion.execute(BLOQUEAR_PARQUE, {"id": parque_id}).one_or_none()
-    if parque is None:
-        raise repositorio_parques.no_encontrado()
+    # Bloquea y despues cuenta (ver repositorio_parques.bloquear): asi ve el
+    # nucleo que otra alta simultanea acaba de confirmar.
+    parque = repositorio_parques.bloquear(sesion, parque_id)
     if not parque.activo:
         raise ConflictoError(
             "El parque esta dado de baja: no admite nucleos.", code="parque_inactivo"
