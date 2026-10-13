@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
-from app.routers import clientes
+from app.routers import clientes, pedidos
 from app.salud import Estado, verificar_dependencias
 
 VERSION = os.getenv("APP_VERSION", "0.1.0")
@@ -30,6 +30,7 @@ app = FastAPI(
 registrar_manejadores(app)
 instalar_observabilidad(app)
 app.include_router(clientes.router)
+app.include_router(pedidos.router)
 
 
 class Salud(BaseModel):
