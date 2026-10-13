@@ -121,6 +121,22 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | GET | `/api/v1/clientes/{id}` | Un cliente. 404 si no existe o es de otro criadero. Todos los roles. |
 | PATCH | `/api/v1/clientes/{id}` | Edición parcial; se valida el resultado completo. `{"activo": true}` reactiva. Roles `admin` y `ventas`. |
 | DELETE | `/api/v1/clientes/{id}` | Baja lógica (`activo = false`): el cliente sigue existiendo para sus pedidos y facturas. 204. Roles `admin` y `ventas`. |
+| POST | `/api/v1/razas` | Alta de raza. 409 `raza_duplicada`. |
+| POST | `/api/v1/madres` | Alta de madre reina. 409 `madre_duplicada`. |
+| POST | `/api/v1/parques` | Alta de parque de fecundación (`nombre`, `ubicacion`, `capacidad_max` en núcleos). 409 `parque_duplicado`. |
+| POST | `/api/v1/nucleos` | Alta de núcleo en un parque. 404 `parque_no_encontrado`; 409 `parque_inactivo`, `parque_lleno` o `posicion_ocupada`. Si el parque queda al límite, responde 201 con la advertencia `parque_al_limite` (#29). |
+| POST | `/api/v1/materiales` | Alta de material (`nombre`, `unidad`). 409 `material_duplicado`. |
+| POST | `/api/v1/items-vendibles` | Alta de ítem vendible con su `alicuota` (valores de `importes.py`, 21% por defecto). 409 `item_vendible_duplicado`. |
+| GET | `/api/v1/{razas,madres,parques,nucleos,materiales,items-vendibles}` | Activos, paginados. `?incluir_inactivos=true` suma los dados de baja; en núcleos, `?parque_id=` filtra. Parques traen `nucleos_activos` y materiales su `stock`, los dos calculados al leer. |
+| GET, PATCH, DELETE | `/api/v1/{razas,madres,parques,nucleos,materiales,items-vendibles}/{id}` | Como en clientes: 404 si no existe o es de otro criadero; PATCH valida el resultado completo y `{"activo": true}` reactiva; DELETE es baja lógica (204). Un parque con núcleos activos no se da de baja (409 `parque_con_nucleos`) ni baja su capacidad por debajo de ellos (409 `capacidad_insuficiente`). |
+| POST | `/api/v1/materiales/{id}/movimientos` | Compra (positiva) o ajuste (con signo y `motivo`) con `fecha` opcional. Devuelve el `stock` que queda; si es negativo, 201 con la advertencia `stock_negativo`. El consumo no entra por acá: lo registra el alta de tanda (#27). 409 `material_inactivo`. |
+| GET | `/api/v1/materiales/{id}/movimientos` | Movimientos del más nuevo al más viejo, paginados. |
+
+En los datos de producción leen todos los roles y escriben `admin` y `produccion`. Todos los POST aceptan `Idempotency-Key`.
+
+Los listados de producción devuelven `{"items": [...], "siguiente": "<cursor>"}`. Para la página siguiente se manda `?cursor=<siguiente>`; cuando `siguiente` es `null`, no hay más. `?limite=` va de 1 a 100 (50 por defecto). Un cursor roto responde 422 `cursor_invalido`. La lógica vive en `app/paginacion.py`.
+
+Una operación que se hizo pero merece un aviso responde con su código de éxito y una lista `advertencias` de `{code, message, details}`; el frontend la muestra y sigue.
 
 ```bash
 curl -s https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
@@ -231,6 +247,7 @@ app/
 ├── salud.py             # Chequeo de dependencias de /health/ready
 ├── idempotencia.py      # Idempotency-Key en los POST que crean recursos
 ├── errores.py           # Excepciones de dominio y forma única de errores
+├── paginacion.py        # Paginación por cursor de los listados
 ├── observabilidad.py    # request_id, middleware y logs JSON
 ├── contexto.py          # request_id del request en curso (contextvars)
 ├── worker.py            # Handler que consume las colas SQS
