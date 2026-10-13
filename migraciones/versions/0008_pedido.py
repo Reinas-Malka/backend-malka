@@ -180,6 +180,9 @@ def upgrade() -> None:
         _id(),
         _tenant_id(),
         sa.Column("pedido_id", postgresql.UUID(as_uuid=True), nullable=False),
+        # Orden de la linea dentro del pedido (1, 2, 3...). Hace falta porque
+        # creado_en es now(), igual para todas las lineas de una transaccion.
+        sa.Column("numero_linea", sa.Integer(), nullable=False),
         # El catalogo no conoce la raza: la combinacion item x raza se define
         # en la linea. #35 usa raza_id para el lock de reservas.
         sa.Column("item_vendible_id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -192,6 +195,7 @@ def upgrade() -> None:
         sa.Column("alicuota", sa.Numeric(5, 3), nullable=False),
         # Sin actualizado_en: la linea no se modifica una vez cargada.
         _creado_en(),
+        sa.CheckConstraint("numero_linea > 0", name="ck_pedido_item_numero_linea"),
         # Mismas reglas que Linea en importes.py: el precio cero es valido.
         sa.CheckConstraint("cantidad > 0", name="ck_pedido_item_cantidad"),
         sa.CheckConstraint("precio_unitario >= 0", name="ck_pedido_item_precio"),
@@ -216,9 +220,15 @@ def upgrade() -> None:
             name="fk_pedido_item_raza_mismo_tenant",
             ondelete="RESTRICT",
         ),
-    )
-    op.create_index(
-        "ix_pedido_item_tenant_pedido", "pedido_item", ["tenant_id", "pedido_id"]
+        # Dos lineas de un mismo pedido no pueden tener el mismo numero. El
+        # indice que crea tambien sirve para leer las lineas de un pedido en
+        # orden, asi que no hace falta otro indice por (tenant_id, pedido_id).
+        sa.UniqueConstraint(
+            "tenant_id",
+            "pedido_id",
+            "numero_linea",
+            name="uq_pedido_item_tenant_pedido_numero_linea",
+        ),
     )
 
     for tabla, permisos in PERMISOS_TABLAS_NUEVAS.items():

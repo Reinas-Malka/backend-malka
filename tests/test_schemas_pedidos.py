@@ -133,7 +133,12 @@ def test_respuesta_lee_la_alicuota_como_la_devuelve_la_base() -> None:
             "destino_pais": None,
             "incoterm": None,
             "items": [
-                {**ITEM, "id": uuid.uuid4(), "alicuota": Decimal("0.210")},
+                {
+                    **ITEM,
+                    "id": uuid.uuid4(),
+                    "numero_linea": 1,
+                    "alicuota": Decimal("0.210"),
+                },
             ],
         }
     )

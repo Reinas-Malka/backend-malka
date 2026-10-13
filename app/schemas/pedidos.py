@@ -66,6 +66,8 @@ class PedidoItemRespuesta(BaseModel):
     """Lo que la API devuelve de una linea, con la alicuota que se copio."""
 
     id: UUID
+    # Orden de la linea en el pedido, empezando en 1.
+    numero_linea: int
     item_vendible_id: UUID
     raza_id: UUID
     cantidad: int

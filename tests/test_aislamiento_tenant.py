@@ -121,9 +121,9 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
     )
     insertar(
         "pedido_item",
-        "INSERT INTO pedido_item (pedido_id, item_vendible_id, raza_id, "
+        "INSERT INTO pedido_item (pedido_id, numero_linea, item_vendible_id, raza_id, "
         "cantidad, precio_unitario, alicuota) "
-        "VALUES (:pedido, :item, :raza, 10, 35.00, 0.21) RETURNING id",
+        "VALUES (:pedido, 1, :item, :raza, 10, 35.00, 0.21) RETURNING id",
         pedido=filas["pedido"],
         item=filas["item_vendible"],
         raza=filas["raza"],

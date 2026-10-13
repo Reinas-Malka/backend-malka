@@ -5,22 +5,24 @@ ninguna consulta filtra por tenant_id, de eso se encarga RLS (ADR 0009). Un
 cliente, item o raza de otro criadero no aparece: responde igual que uno que
 no existe, asi no se puede averiguar que ids hay en otro criadero.
 
-Los ids del cuerpo que no existen son 422, no 404: el recurso de la URL
-(/api/v1/pedidos) existe, lo que esta mal es un dato del pedido.
+En el alta, los ids del cuerpo que no existen son 422, no 404: el recurso de
+la URL (/api/v1/pedidos) existe, lo que esta mal es un dato del pedido. En
+GET /api/v1/pedidos/{id} el id esta en la URL, y ahi si es 404.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
-from app.errores import ValidacionError
+from app.errores import NoEncontradoError, ValidacionError
 from app.schemas.pedidos import PedidoCrear, PedidoItemRespuesta, PedidoRespuesta
 from app.services.ventas.clientes import TipoCliente
-from app.services.ventas.pedidos import validar_pedido
+from app.services.ventas.pedidos import EstadoPedido, validar_pedido
 
 # Las consultas se escriben completas, sin armar SQL con f-strings: los valores
 # viajan siempre como parametros (:nombre), nunca pegados al texto.
@@ -43,11 +45,41 @@ INSERTAR_PEDIDO = text(
 )
 
 INSERTAR_ITEM = text(
-    "INSERT INTO pedido_item (pedido_id, item_vendible_id, raza_id, cantidad, "
-    "precio_unitario, alicuota) "
-    "VALUES (:pedido_id, :item_vendible_id, :raza_id, :cantidad, "
+    "INSERT INTO pedido_item (pedido_id, numero_linea, item_vendible_id, raza_id, "
+    "cantidad, precio_unitario, alicuota) "
+    "VALUES (:pedido_id, :numero_linea, :item_vendible_id, :raza_id, :cantidad, "
     ":precio_unitario, :alicuota) "
-    "RETURNING id, item_vendible_id, raza_id, cantidad, precio_unitario, alicuota"
+    "RETURNING id, numero_linea, item_vendible_id, raza_id, cantidad, "
+    "precio_unitario, alicuota"
+)
+
+# Filtros opcionales: con el parametro en NULL, la condicion deja pasar todo.
+# El CAST es obligatorio: un NULL sin tipo hace fallar a PostgreSQL con
+# "could not determine data type of parameter".
+# El id desempata: sin el, dos pedidos con el mismo creado_en podrian cambiar
+# de pagina entre una consulta y otra.
+LISTAR_PEDIDOS = text(
+    "SELECT id, cliente_id, estado, moneda, destino_pais, incoterm, "
+    "fecha_entrega_solicitada "
+    "FROM pedido "
+    "WHERE (CAST(:estado AS text) IS NULL OR estado = :estado) "
+    "AND (CAST(:cliente_id AS uuid) IS NULL OR cliente_id = :cliente_id) "
+    "ORDER BY creado_en DESC, id "
+    "LIMIT :limite OFFSET :desplazamiento"
+)
+
+OBTENER_PEDIDO = text(
+    "SELECT id, cliente_id, estado, moneda, destino_pais, incoterm, "
+    "fecha_entrega_solicitada "
+    "FROM pedido WHERE id = :id"
+)
+
+# Las lineas de varios pedidos en una sola consulta (no una por pedido).
+LEER_LINEAS = text(
+    "SELECT pedido_id, id, numero_linea, item_vendible_id, raza_id, cantidad, "
+    "precio_unitario, alicuota "
+    "FROM pedido_item WHERE pedido_id = ANY(:ids) "
+    "ORDER BY pedido_id, numero_linea"
 )
 
 
@@ -102,11 +134,19 @@ def _alicuotas(sesion: Session, datos: PedidoCrear) -> dict[UUID, Any]:
     return alicuotas
 
 
-def _a_respuesta(pedido: Row[Any], items: list[Row[Any]]) -> PedidoRespuesta:
+def _a_respuesta(pedido: Row[Any], items: Sequence[Row[Any]]) -> PedidoRespuesta:
     return PedidoRespuesta(
         **pedido._mapping,
         items=[PedidoItemRespuesta.model_validate(dict(i._mapping)) for i in items],
     )
+
+
+def _lineas_por_pedido(sesion: Session, ids: list[UUID]) -> dict[UUID, list[Row[Any]]]:
+    """Las lineas de esos pedidos, agrupadas por pedido y en orden."""
+    lineas: dict[UUID, list[Row[Any]]] = {}
+    for linea in sesion.execute(LEER_LINEAS, {"ids": ids}):
+        lineas.setdefault(linea.pedido_id, []).append(linea)
+    return lineas
 
 
 def crear(sesion: Session, datos: PedidoCrear) -> PedidoRespuesta:
@@ -128,10 +168,45 @@ def crear(sesion: Session, datos: PedidoCrear) -> PedidoRespuesta:
             {
                 **item.model_dump(),
                 "pedido_id": pedido.id,
+                "numero_linea": numero,
                 # Se copia: si el catalogo cambia, el pedido no se recalcula.
                 "alicuota": alicuotas[item.item_vendible_id],
             },
         ).one()
-        for item in datos.items
+        for numero, item in enumerate(datos.items, start=1)
     ]
     return _a_respuesta(pedido, items)
+
+
+def obtener(sesion: Session, pedido_id: UUID) -> PedidoRespuesta:
+    """Un pedido con sus lineas. 404 si no existe o es de otro criadero."""
+    pedido = sesion.execute(OBTENER_PEDIDO, {"id": pedido_id}).one_or_none()
+    if pedido is None:
+        raise NoEncontradoError("No existe el pedido.", code="pedido_no_encontrado")
+    lineas = _lineas_por_pedido(sesion, [pedido_id])
+    return _a_respuesta(pedido, lineas.get(pedido_id, []))
+
+
+def listar(
+    sesion: Session,
+    *,
+    estado: EstadoPedido | None = None,
+    cliente_id: UUID | None = None,
+    limite: int,
+    desplazamiento: int,
+) -> list[PedidoRespuesta]:
+    """Pedidos del criadero con sus lineas, del mas nuevo al mas viejo."""
+    pedidos = sesion.execute(
+        LISTAR_PEDIDOS,
+        {
+            "estado": None if estado is None else estado.value,
+            "cliente_id": cliente_id,
+            "limite": limite,
+            "desplazamiento": desplazamiento,
+        },
+    ).all()
+    if not pedidos:
+        return []
+
+    lineas = _lineas_por_pedido(sesion, [pedido.id for pedido in pedidos])
+    return [_a_respuesta(pedido, lineas.get(pedido.id, [])) for pedido in pedidos]
