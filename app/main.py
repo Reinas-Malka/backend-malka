@@ -15,7 +15,16 @@ from pydantic import BaseModel
 
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
-from app.routers import clientes, pedidos
+from app.routers import (
+    clientes,
+    items_vendibles,
+    madres,
+    materiales,
+    nucleos,
+    parques,
+    pedidos,
+    razas,
+)
 from app.salud import Estado, verificar_dependencias
 
 VERSION = os.getenv("APP_VERSION", "0.1.0")
@@ -31,6 +40,12 @@ registrar_manejadores(app)
 instalar_observabilidad(app)
 app.include_router(clientes.router)
 app.include_router(pedidos.router)
+app.include_router(razas.router)
+app.include_router(madres.router)
+app.include_router(parques.router)
+app.include_router(nucleos.router)
+app.include_router(materiales.router)
+app.include_router(items_vendibles.router)
 
 
 class Salud(BaseModel):
