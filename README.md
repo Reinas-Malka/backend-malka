@@ -122,6 +122,8 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | PATCH | `/api/v1/clientes/{id}` | Edición parcial; se valida el resultado completo. `{"activo": true}` reactiva. Roles `admin` y `ventas`. |
 | DELETE | `/api/v1/clientes/{id}` | Baja lógica (`activo = false`): el cliente sigue existiendo para sus pedidos y facturas. 204. Roles `admin` y `ventas`. |
 | POST | `/api/v1/pedidos` | Alta de pedido con sus líneas, siempre en `borrador`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201, o 422 si no es coherente con el cliente (ver [Pedidos](#pedidos)). |
+| GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` (1 a 100, por defecto 100) y `?desplazamiento=`. Todos los roles. |
+| GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
 
 ```bash
 curl -s https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
@@ -239,6 +241,7 @@ def crear_tanda(
 - **Nacional:** moneda ARS, sin `destino_pais` ni `incoterm`.
 - El precio se manda como texto (`"35.50"`), con 2 decimales como máximo. La alícuota no se manda: se copia del ítem vendible al crear la línea, y un cambio posterior del catálogo no recalcula el pedido.
 - No se acepta `estado`: el alta crea siempre en `borrador`. Las transiciones son del #36.
+- Cada línea vuelve con su `numero_linea` (1, 2, 3…), en el orden en que se mandó.
 
 | Código (422) | Cuándo |
 |---|---|

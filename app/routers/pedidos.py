@@ -1,13 +1,15 @@
 """Endpoints de pedidos (#34).
 
-Crear puede solo admin y ventas. La validacion de formato vive en los
-schemas y la que necesita la base en el repositorio: el endpoint solo conecta
-el request con el repositorio.
+Leer puede cualquier rol del criadero; crear, solo admin y ventas. La
+validacion de formato vive en los schemas y la que necesita la base en el
+repositorio: los endpoints solo conectan el request con el repositorio.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -16,11 +18,16 @@ from app.db import obtener_sesion
 from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
 from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.services.ventas import repositorio_pedidos
+from app.services.ventas.pedidos import EstadoPedido
 
 router = APIRouter(prefix="/api/v1/pedidos", tags=["pedidos"])
 
 # Corre antes que obtener_sesion: un rol sin permiso no abre ninguna conexion.
 SOLO_ESCRITURA = [Depends(require_role("admin", "ventas"))]
+
+# Tope por pagina: cada pedido trae sus lineas, una pagina sin tope podria
+# devolver miles de filas en un solo request.
+MAX_LIMITE = 100
 
 
 @router.post(
@@ -37,3 +44,31 @@ def crear_pedido(
     return responder_una_vez(
         sesion, solicitud, lambda: repositorio_pedidos.crear(sesion, datos)
     )
+
+
+# Los parametros que no estan en la ruta llegan por query string
+# (?estado=borrador&limite=20). Query(ge=..., le=...) responde 422 si el valor
+# esta fuera de rango, antes de llegar a la base.
+@router.get("", response_model=list[PedidoRespuesta])
+def listar_pedidos(
+    estado: EstadoPedido | None = None,
+    cliente_id: UUID | None = None,
+    limite: int = Query(MAX_LIMITE, ge=1, le=MAX_LIMITE),
+    desplazamiento: int = Query(0, ge=0),
+    sesion: Session = Depends(obtener_sesion),
+) -> list[PedidoRespuesta]:
+    return repositorio_pedidos.listar(
+        sesion,
+        estado=estado,
+        cliente_id=cliente_id,
+        limite=limite,
+        desplazamiento=desplazamiento,
+    )
+
+
+# pedido_id es UUID: /api/v1/pedidos/abc responde 422 sin tocar la base.
+@router.get("/{pedido_id}", response_model=PedidoRespuesta)
+def obtener_pedido(
+    pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
+) -> PedidoRespuesta:
+    return repositorio_pedidos.obtener(sesion, pedido_id)

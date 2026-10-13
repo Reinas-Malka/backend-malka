@@ -32,6 +32,7 @@ TABLAS = ("pedido_item", "pedido", "idempotencia", "cliente", "item_vendible", "
 class Datos:
     """Lo que cada criadero tiene cargado antes de los tests."""
 
+    tenant: uuid.UUID
     nacional: uuid.UUID
     exportacion: uuid.UUID
     inactivo: uuid.UUID
@@ -50,6 +51,7 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Datos:
     crear_tenant(c, tenant)
     fijar_tenant(c, tenant)
     return Datos(
+        tenant=tenant,
         nacional=_id(
             c,
             "INSERT INTO cliente (nombre, pais, tipo, condicion_iva, cuit_o_tax_id) "
@@ -101,12 +103,16 @@ def criaderos(motor_owner: Engine) -> Iterator[tuple[uuid.UUID, Datos, Datos]]:
 def sin_pedidos(
     motor_owner: Engine, criaderos: tuple[uuid.UUID, Datos, Datos]
 ) -> Iterator[None]:
-    """Cada test arranca sin pedidos: los datos de uno no afectan a otro."""
+    """Cada test arranca sin pedidos: los datos de uno no afectan a otro.
+
+    Limpia los dos criaderos: los tests de lectura tambien crean pedidos en B.
+    """
     yield
-    with motor_owner.begin() as c:
-        fijar_tenant(c, criaderos[0])
-        for tabla in ("pedido_item", "pedido", "idempotencia"):
-            c.execute(text(f"DELETE FROM {tabla} WHERE true"))  # noqa: S608
+    for tenant in (criaderos[0], criaderos[2].tenant):
+        with motor_owner.begin() as c:
+            fijar_tenant(c, tenant)
+            for tabla in ("pedido_item", "pedido", "idempotencia"):
+                c.execute(text(f"DELETE FROM {tabla} WHERE true"))  # noqa: S608
 
 
 @pytest.fixture
@@ -391,3 +397,197 @@ def test_la_misma_clave_crea_un_solo_pedido(
     assert segunda.headers["Idempotent-Replayed"] == "true"
     assert primera.json() == segunda.json()
     assert cantidad_de_pedidos(motor_owner, tenant) == 1
+
+
+# --- Lectura: GET /api/v1/pedidos y GET /api/v1/pedidos/{id} ---
+
+
+def crear(api: TestClient, tenant: uuid.UUID, cuerpo: dict[str, Any]) -> dict[str, Any]:
+    respuesta = api.post(URL, json=cuerpo, headers=como(tenant))
+    assert respuesta.status_code == 201, respuesta.json()
+    creado: dict[str, Any] = respuesta.json()
+    return creado
+
+
+def test_obtener_devuelve_lo_mismo_que_el_alta(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, datos, _ = criaderos
+    creado = crear(api, tenant, exportacion(datos))
+
+    respuesta = api.get(f"{URL}/{creado['id']}", headers=como(tenant))
+
+    assert respuesta.status_code == 200
+    assert respuesta.json() == creado
+
+
+def test_las_lineas_vuelven_en_el_orden_en_que_se_cargaron(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    """creado_en es igual en todas las lineas: el orden lo da numero_linea."""
+    tenant, datos, _ = criaderos
+    cuerpo = nacional(datos)
+    linea = cuerpo["items"][0]
+    cuerpo["items"] = [{**linea, "cantidad": cantidad} for cantidad in (3, 1, 7, 2)]
+    creado = crear(api, tenant, cuerpo)
+
+    leido = api.get(f"{URL}/{creado['id']}", headers=como(tenant)).json()
+
+    assert [i["cantidad"] for i in leido["items"]] == [3, 1, 7, 2]
+    assert [i["numero_linea"] for i in leido["items"]] == [1, 2, 3, 4]
+
+
+def test_pedido_de_otro_criadero_responde_igual_que_uno_inexistente(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    """404 y no 403: decir "no tenes permiso" confirmaria que existe."""
+    tenant, _, datos_b = criaderos
+    de_b = crear(api, datos_b.tenant, nacional(datos_b))
+
+    ajeno = api.get(f"{URL}/{de_b['id']}", headers=como(tenant))
+    inexistente = api.get(f"{URL}/{uuid.uuid4()}", headers=como(tenant))
+
+    assert ajeno.status_code == inexistente.status_code == 404
+    assert codigo(ajeno) == codigo(inexistente) == "pedido_no_encontrado"
+
+
+def test_id_que_no_es_uuid_es_422(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, _, _ = criaderos
+
+    assert api.get(f"{URL}/abc", headers=como(tenant)).status_code == 422
+
+
+def test_lista_vacia(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, _, _ = criaderos
+
+    respuesta = api.get(URL, headers=como(tenant))
+
+    assert respuesta.status_code == 200
+    assert respuesta.json() == []
+
+
+def test_lista_solo_los_del_criadero_del_mas_nuevo_al_mas_viejo(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, datos, datos_b = criaderos
+    viejo = crear(api, tenant, nacional(datos))
+    nuevo = crear(api, tenant, exportacion(datos))
+    crear(api, datos_b.tenant, nacional(datos_b))
+
+    lista = api.get(URL, headers=como(tenant)).json()
+
+    assert [p["id"] for p in lista] == [nuevo["id"], viejo["id"]]
+
+
+def test_lista_cada_pedido_con_sus_lineas(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, datos, _ = criaderos
+    con_dos = nacional(datos)
+    con_dos["items"].append({**con_dos["items"][0], "cantidad": 5})
+    a = crear(api, tenant, con_dos)
+    b = crear(api, tenant, exportacion(datos))
+
+    lista = api.get(URL, headers=como(tenant)).json()
+
+    por_id = {p["id"]: p for p in lista}
+    assert por_id[a["id"]]["items"] == a["items"]
+    assert por_id[b["id"]]["items"] == b["items"]
+
+
+def test_lista_filtra_por_estado(
+    api: TestClient,
+    criaderos: tuple[uuid.UUID, Datos, Datos],
+    motor_owner: Engine,
+) -> None:
+    tenant, datos, _ = criaderos
+    borrador = crear(api, tenant, nacional(datos))
+    reservado = crear(api, tenant, nacional(datos))
+    # Hasta #36 no hay transiciones: se cambia el estado directo en la base.
+    with motor_owner.begin() as c:
+        fijar_tenant(c, tenant)
+        c.execute(
+            text("UPDATE pedido SET estado = 'reservado' WHERE id = :id"),
+            {"id": reservado["id"]},
+        )
+
+    def ids(estado: str) -> list[str]:
+        lista = api.get(URL, params={"estado": estado}, headers=como(tenant)).json()
+        return [p["id"] for p in lista]
+
+    assert ids("borrador") == [borrador["id"]]
+    assert ids("reservado") == [reservado["id"]]
+    assert ids("entregado") == []
+
+
+def test_lista_filtra_por_cliente(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, datos, _ = criaderos
+    crear(api, tenant, nacional(datos))
+    del_exterior = crear(api, tenant, exportacion(datos))
+
+    lista = api.get(
+        URL, params={"cliente_id": str(datos.exportacion)}, headers=como(tenant)
+    ).json()
+
+    assert [p["id"] for p in lista] == [del_exterior["id"]]
+
+
+def test_lista_paginada(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, datos, _ = criaderos
+    creados = [crear(api, tenant, nacional(datos)) for _ in range(3)]
+
+    def pagina(desplazamiento: int) -> list[str]:
+        params = {"limite": 2, "desplazamiento": desplazamiento}
+        lista = api.get(URL, params=params, headers=como(tenant)).json()
+        return [p["id"] for p in lista]
+
+    # Del mas nuevo al mas viejo: la primera pagina trae los dos ultimos.
+    assert pagina(0) == [creados[2]["id"], creados[1]["id"]]
+    assert pagina(2) == [creados[0]["id"]]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        pytest.param({"estado": "enviado"}, id="estado_fuera_de_la_lista"),
+        pytest.param({"cliente_id": "abc"}, id="cliente_no_es_uuid"),
+        pytest.param({"limite": 0}, id="limite_cero"),
+        pytest.param({"limite": 101}, id="limite_mayor_al_tope"),
+        pytest.param({"desplazamiento": -1}, id="desplazamiento_negativo"),
+    ],
+)
+def test_filtro_invalido_es_422(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos], params: dict[str, Any]
+) -> None:
+    tenant, _, _ = criaderos
+
+    respuesta = api.get(URL, params=params, headers=como(tenant))
+
+    assert respuesta.status_code == 422
+    assert codigo(respuesta) == "validacion"
+
+
+@pytest.mark.parametrize("rol", ["admin", "ventas", "produccion", "lectura"])
+def test_todos_los_roles_leen(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos], rol: str
+) -> None:
+    tenant, datos, _ = criaderos
+    creado = crear(api, tenant, nacional(datos))
+
+    lista = api.get(URL, headers=como(tenant, rol))
+    uno = api.get(f"{URL}/{creado['id']}", headers=como(tenant, rol))
+
+    assert lista.status_code == uno.status_code == 200
+
+
+def test_leer_sin_token_es_401(api: TestClient) -> None:
+    assert api.get(URL).status_code == 401
+    assert api.get(f"{URL}/{uuid.uuid4()}").status_code == 401
