@@ -121,6 +121,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | GET | `/api/v1/clientes/{id}` | Un cliente. 404 si no existe o es de otro criadero. Todos los roles. |
 | PATCH | `/api/v1/clientes/{id}` | Edición parcial; se valida el resultado completo. `{"activo": true}` reactiva. Roles `admin` y `ventas`. |
 | DELETE | `/api/v1/clientes/{id}` | Baja lógica (`activo = false`): el cliente sigue existiendo para sus pedidos y facturas. 204. Roles `admin` y `ventas`. |
+| POST | `/api/v1/pedidos` | Alta de pedido con sus líneas, siempre en `borrador`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201, o 422 si no es coherente con el cliente (ver [Pedidos](#pedidos)). |
 
 ```bash
 curl -s https://w0kwb9belc.execute-api.us-east-1.amazonaws.com/health
@@ -216,6 +217,38 @@ def crear_tanda(
 ) -> JSONResponse:
     return responder_una_vez(sesion, pedido, lambda: repositorio_tandas.crear(sesion, datos))
 ```
+
+### Pedidos
+
+`POST /api/v1/pedidos` crea el pedido y sus líneas en una sola transacción (#34). Las reglas salen de `docs/dominio.md`, sección "Pedidos":
+
+```json
+{
+  "cliente_id": "…",
+  "moneda": "EUR",
+  "destino_pais": "DE",
+  "incoterm": "CPT",
+  "fecha_entrega_solicitada": "2026-11-30",
+  "items": [
+    {"item_vendible_id": "…", "raza_id": "…", "cantidad": 10, "precio_unitario": "35.50"}
+  ]
+}
+```
+
+- **Exportación ⇔ cliente de tipo exportación.** Exige `destino_pais` (país donde recibe el cliente final, no el del hub) y moneda USD o EUR. El `incoterm` es opcional.
+- **Nacional:** moneda ARS, sin `destino_pais` ni `incoterm`.
+- El precio se manda como texto (`"35.50"`), con 2 decimales como máximo. La alícuota no se manda: se copia del ítem vendible al crear la línea, y un cambio posterior del catálogo no recalcula el pedido.
+- No se acepta `estado`: el alta crea siempre en `borrador`. Las transiciones son del #36.
+
+| Código (422) | Cuándo |
+|---|---|
+| `pedido_incoherente` | La moneda, `destino_pais` o `incoterm` no corresponden al tipo de cliente |
+| `cliente_inexistente` | El cliente no existe o es de otro criadero (responden igual a propósito) |
+| `cliente_inactivo` | El cliente está dado de baja |
+| `item_vendible_inexistente` / `raza_inexistente` | Alguno no existe, es de otro criadero o está inactivo. `details.ids` lista cuáles |
+| `validacion` | El JSON no cumple el formato (campo faltante, tipo incorrecto, campo de más) |
+
+Son 422 y no 404 porque la ruta existe: lo que está mal es un dato del cuerpo.
 
 ---
 
@@ -524,6 +557,7 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 - `POST /api/v1/clientes` todavía no acepta `Idempotency-Key`: llega con el #25.
 - `APP_VERSION` sigue fijo en `"latest"`: el commit desplegado se ve en el tag de la imagen en ECR y en el resumen de cada corrida de *Deploy*, pero todavía no en `/health`.
 - `terraform apply` sigue siendo manual, desde la máquina local.
+- La respuesta del pedido no incluye neto, IVA ni total: `calcular_importes` exige tipo de cambio para USD y EUR, y el pedido no lo guarda. Depende de enmendar el ADR 0006.
 
 ---
 
