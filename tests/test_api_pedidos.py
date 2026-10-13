@@ -467,7 +467,7 @@ def test_lista_vacia(
     respuesta = api.get(URL, headers=como(tenant))
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == []
+    assert respuesta.json() == {"items": [], "siguiente": None}
 
 
 def test_lista_solo_los_del_criadero_del_mas_nuevo_al_mas_viejo(
@@ -478,7 +478,7 @@ def test_lista_solo_los_del_criadero_del_mas_nuevo_al_mas_viejo(
     nuevo = crear(api, tenant, exportacion(datos))
     crear(api, datos_b.tenant, nacional(datos_b))
 
-    lista = api.get(URL, headers=como(tenant)).json()
+    lista = api.get(URL, headers=como(tenant)).json()["items"]
 
     assert [p["id"] for p in lista] == [nuevo["id"], viejo["id"]]
 
@@ -492,7 +492,7 @@ def test_lista_cada_pedido_con_sus_lineas(
     a = crear(api, tenant, con_dos)
     b = crear(api, tenant, exportacion(datos))
 
-    lista = api.get(URL, headers=como(tenant)).json()
+    lista = api.get(URL, headers=como(tenant)).json()["items"]
 
     por_id = {p["id"]: p for p in lista}
     assert por_id[a["id"]]["items"] == a["items"]
@@ -517,7 +517,7 @@ def test_lista_filtra_por_estado(
 
     def ids(estado: str) -> list[str]:
         lista = api.get(URL, params={"estado": estado}, headers=como(tenant)).json()
-        return [p["id"] for p in lista]
+        return [p["id"] for p in lista["items"]]
 
     assert ids("borrador") == [borrador["id"]]
     assert ids("reservado") == [reservado["id"]]
@@ -533,25 +533,53 @@ def test_lista_filtra_por_cliente(
 
     lista = api.get(
         URL, params={"cliente_id": str(datos.exportacion)}, headers=como(tenant)
-    ).json()
+    ).json()["items"]
 
     assert [p["id"] for p in lista] == [del_exterior["id"]]
 
 
-def test_lista_paginada(
+def test_lista_paginada_con_cursor(
     api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
 ) -> None:
     tenant, datos, _ = criaderos
-    creados = [crear(api, tenant, nacional(datos)) for _ in range(3)]
+    creados = [crear(api, tenant, nacional(datos))["id"] for _ in range(3)]
 
-    def pagina(desplazamiento: int) -> list[str]:
-        params = {"limite": 2, "desplazamiento": desplazamiento}
-        lista = api.get(URL, params=params, headers=como(tenant)).json()
-        return [p["id"] for p in lista]
+    def pagina(**params: Any) -> dict[str, Any]:
+        respuesta = api.get(URL, params={"limite": 2, **params}, headers=como(tenant))
+        assert respuesta.status_code == 200
+        return dict(respuesta.json())
 
     # Del mas nuevo al mas viejo: la primera pagina trae los dos ultimos.
-    assert pagina(0) == [creados[2]["id"], creados[1]["id"]]
-    assert pagina(2) == [creados[0]["id"]]
+    primera = pagina()
+    assert [p["id"] for p in primera["items"]] == [creados[2], creados[1]]
+    assert primera["siguiente"] is not None
+
+    # Un alta entre dos paginas no corre a los demas: con desplazamiento, la
+    # segunda pagina repetiria creados[1].
+    crear(api, tenant, nacional(datos))
+    segunda = pagina(cursor=primera["siguiente"])
+    assert [p["id"] for p in segunda["items"]] == [creados[0]]
+    assert segunda["siguiente"] is None
+
+
+def test_el_cursor_respeta_los_filtros(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, datos, _ = criaderos
+    del_exterior = [crear(api, tenant, exportacion(datos))["id"] for _ in range(2)]
+    crear(api, tenant, nacional(datos))
+    params = {"cliente_id": str(datos.exportacion), "limite": 1}
+
+    primera = api.get(URL, params=params, headers=como(tenant)).json()
+    segunda = api.get(
+        URL, params={**params, "cursor": primera["siguiente"]}, headers=como(tenant)
+    ).json()
+
+    assert [p["id"] for p in primera["items"] + segunda["items"]] == [
+        del_exterior[1],
+        del_exterior[0],
+    ]
+    assert segunda["siguiente"] is None
 
 
 @pytest.mark.parametrize(
@@ -561,7 +589,6 @@ def test_lista_paginada(
         pytest.param({"cliente_id": "abc"}, id="cliente_no_es_uuid"),
         pytest.param({"limite": 0}, id="limite_cero"),
         pytest.param({"limite": 101}, id="limite_mayor_al_tope"),
-        pytest.param({"desplazamiento": -1}, id="desplazamiento_negativo"),
     ],
 )
 def test_filtro_invalido_es_422(
@@ -573,6 +600,18 @@ def test_filtro_invalido_es_422(
 
     assert respuesta.status_code == 422
     assert codigo(respuesta) == "validacion"
+
+
+def test_cursor_invalido_es_422(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    """Un cursor roto o armado a mano no llega a la base."""
+    tenant, _, _ = criaderos
+
+    respuesta = api.get(URL, params={"cursor": "no-es-un-cursor"}, headers=como(tenant))
+
+    assert respuesta.status_code == 422
+    assert codigo(respuesta) == "cursor_invalido"
 
 
 @pytest.mark.parametrize("rol", ["admin", "ventas", "produccion", "lectura"])

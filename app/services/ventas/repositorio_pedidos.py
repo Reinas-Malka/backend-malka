@@ -13,6 +13,7 @@ GET /api/v1/pedidos/{id} el id esta en la URL, y ahi si es 404.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
 from app.errores import NoEncontradoError, ValidacionError
+from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del_cursor
 from app.schemas.pedidos import PedidoCrear, PedidoItemRespuesta, PedidoRespuesta
 from app.services.ventas.clientes import TipoCliente
 from app.services.ventas.pedidos import EstadoPedido, validar_pedido
@@ -56,16 +58,19 @@ INSERTAR_ITEM = text(
 # Filtros opcionales: con el parametro en NULL, la condicion deja pasar todo.
 # El CAST es obligatorio: un NULL sin tipo hace fallar a PostgreSQL con
 # "could not determine data type of parameter".
-# El id desempata: sin el, dos pedidos con el mismo creado_en podrian cambiar
-# de pagina entre una consulta y otra.
+# Del mas nuevo al mas viejo; el id desempata. El cursor es (creado_en, id)
+# del ultimo pedido devuelto y la pagina siguiente sigue con los anteriores a
+# el. Las dos columnas van DESC: asi "anterior" es (creado_en, id) < cursor.
 LISTAR_PEDIDOS = text(
     "SELECT id, cliente_id, estado, moneda, destino_pais, incoterm, "
-    "fecha_entrega_solicitada "
+    "fecha_entrega_solicitada, creado_en "
     "FROM pedido "
     "WHERE (CAST(:estado AS text) IS NULL OR estado = :estado) "
     "AND (CAST(:cliente_id AS uuid) IS NULL OR cliente_id = :cliente_id) "
-    "ORDER BY creado_en DESC, id "
-    "LIMIT :limite OFFSET :desplazamiento"
+    "AND (:sin_cursor OR (creado_en, id) < "
+    "(CAST(:c_creado AS timestamptz), CAST(:c_id AS uuid))) "
+    "ORDER BY creado_en DESC, id DESC "
+    "LIMIT :limite"
 )
 
 OBTENER_PEDIDO = text(
@@ -189,24 +194,33 @@ def obtener(sesion: Session, pedido_id: UUID) -> PedidoRespuesta:
 
 def listar(
     sesion: Session,
+    pagina: ParametrosDePagina,
     *,
     estado: EstadoPedido | None = None,
     cliente_id: UUID | None = None,
-    limite: int,
-    desplazamiento: int,
-) -> list[PedidoRespuesta]:
+) -> Pagina[PedidoRespuesta]:
     """Pedidos del criadero con sus lineas, del mas nuevo al mas viejo."""
+    c_creado, c_id = valores_del_cursor(pagina, (datetime.fromisoformat, UUID))
     pedidos = sesion.execute(
         LISTAR_PEDIDOS,
         {
             "estado": None if estado is None else estado.value,
             "cliente_id": cliente_id,
-            "limite": limite,
-            "desplazamiento": desplazamiento,
+            "sin_cursor": pagina.cursor is None,
+            "c_creado": c_creado,
+            "c_id": c_id,
+            # Uno de mas: si viene, hay pagina siguiente.
+            "limite": pagina.limite + 1,
         },
     ).all()
     if not pedidos:
-        return []
+        return Pagina[PedidoRespuesta](items=[])
 
     lineas = _lineas_por_pedido(sesion, [pedido.id for pedido in pedidos])
-    return [_a_respuesta(pedido, lineas.get(pedido.id, [])) for pedido in pedidos]
+    # creado_en solo sirve para el cursor: no sale en la respuesta.
+    creados = {pedido.id: pedido.creado_en for pedido in pedidos}
+    return armar_pagina(
+        [_a_respuesta(pedido, lineas.get(pedido.id, [])) for pedido in pedidos],
+        pagina.limite,
+        lambda pedido: (creados[pedido.id].isoformat(), pedido.id),
+    )

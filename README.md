@@ -122,7 +122,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | PATCH | `/api/v1/clientes/{id}` | Edición parcial; se valida el resultado completo. `{"activo": true}` reactiva. Roles `admin` y `ventas`. |
 | DELETE | `/api/v1/clientes/{id}` | Baja lógica (`activo = false`): el cliente sigue existiendo para sus pedidos y facturas. 204. Roles `admin` y `ventas`. |
 | POST | `/api/v1/pedidos` | Alta de pedido con sus líneas, siempre en `borrador`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201, o 422 si no es coherente con el cliente (ver [Pedidos](#pedidos)). |
-| GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` (1 a 100, por defecto 100) y `?desplazamiento=`. Todos los roles. |
+| GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` y `?cursor=` (ver más abajo). Todos los roles. |
 | GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
 | POST | `/api/v1/razas` | Alta de raza. 409 `raza_duplicada`. |
 | POST | `/api/v1/madres` | Alta de madre reina. 409 `madre_duplicada`. |
@@ -137,7 +137,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 
 En los datos de producción leen todos los roles y escriben `admin` y `produccion`. Todos los POST aceptan `Idempotency-Key`.
 
-Los listados de producción devuelven `{"items": [...], "siguiente": "<cursor>"}`. Para la página siguiente se manda `?cursor=<siguiente>`; cuando `siguiente` es `null`, no hay más. `?limite=` va de 1 a 100 (50 por defecto). Un cursor roto responde 422 `cursor_invalido`. La lógica vive en `app/paginacion.py`.
+Los listados de producción y de pedidos devuelven `{"items": [...], "siguiente": "<cursor>"}`. Para la página siguiente se manda `?cursor=<siguiente>`; cuando `siguiente` es `null`, no hay más. `?limite=` va de 1 a 100 (50 por defecto). Un cursor roto responde 422 `cursor_invalido`. La lógica vive en `app/paginacion.py`.
 
 Una operación que se hizo pero merece un aviso responde con su código de éxito y una lista `advertencias` de `{code, message, details}`; el frontend la muestra y sigue.
 

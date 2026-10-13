@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.auth import require_role
 from app.db import obtener_sesion
 from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
+from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
 from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.services.ventas import repositorio_pedidos
 from app.services.ventas.pedidos import EstadoPedido
@@ -24,10 +25,6 @@ router = APIRouter(prefix="/api/v1/pedidos", tags=["pedidos"])
 
 # Corre antes que obtener_sesion: un rol sin permiso no abre ninguna conexion.
 SOLO_ESCRITURA = [Depends(require_role("admin", "ventas"))]
-
-# Tope por pagina: cada pedido trae sus lineas, una pagina sin tope podria
-# devolver miles de filas en un solo request.
-MAX_LIMITE = 100
 
 
 @router.post(
@@ -47,22 +44,17 @@ def crear_pedido(
 
 
 # Los parametros que no estan en la ruta llegan por query string
-# (?estado=borrador&limite=20). Query(ge=..., le=...) responde 422 si el valor
-# esta fuera de rango, antes de llegar a la base.
-@router.get("", response_model=list[PedidoRespuesta])
+# (?estado=borrador&limite=20&cursor=...). ?limite= y ?cursor= los valida
+# parametros_de_pagina (app/paginacion.py), igual que en los demas listados.
+@router.get("", response_model=Pagina[PedidoRespuesta])
 def listar_pedidos(
     estado: EstadoPedido | None = None,
     cliente_id: UUID | None = None,
-    limite: int = Query(MAX_LIMITE, ge=1, le=MAX_LIMITE),
-    desplazamiento: int = Query(0, ge=0),
+    pagina: ParametrosDePagina = Depends(parametros_de_pagina),
     sesion: Session = Depends(obtener_sesion),
-) -> list[PedidoRespuesta]:
+) -> Pagina[PedidoRespuesta]:
     return repositorio_pedidos.listar(
-        sesion,
-        estado=estado,
-        cliente_id=cliente_id,
-        limite=limite,
-        desplazamiento=desplazamiento,
+        sesion, pagina, estado=estado, cliente_id=cliente_id
     )
 
 
