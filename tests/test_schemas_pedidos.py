@@ -14,7 +14,12 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.pedidos import MAX_ITEMS, PedidoCrear, PedidoRespuesta
+from app.schemas.pedidos import (
+    MAX_CANTIDAD,
+    MAX_ITEMS,
+    PedidoCrear,
+    PedidoRespuesta,
+)
 from app.services.documentos.importes import Alicuota
 from app.services.ventas.pedidos import EstadoPedido, Incoterm, Moneda
 
@@ -146,3 +151,23 @@ def test_respuesta_lee_la_alicuota_como_la_devuelve_la_base() -> None:
     assert respuesta.estado == EstadoPedido.BORRADOR
     assert respuesta.items[0].alicuota is Alicuota.IVA_21
     assert respuesta.model_dump(mode="json")["items"][0]["alicuota"] == "0.21"
+
+
+def test_cantidad_que_no_entra_en_la_columna_es_error_de_formato() -> None:
+    """La columna es Integer: sin tope, la base revienta y la API da 500."""
+    with pytest.raises(ValidationError):
+        PedidoCrear(**{**NACIONAL, "items": [{**ITEM, "cantidad": MAX_CANTIDAD + 1}]})
+
+
+def test_cantidad_maxima_se_acepta() -> None:
+    pedido = PedidoCrear(**{**NACIONAL, "items": [{**ITEM, "cantidad": MAX_CANTIDAD}]})
+
+    assert pedido.items[0].cantidad == MAX_CANTIDAD
+
+
+def test_moneda_y_destino_con_espacios_se_normalizan() -> None:
+    """str_strip_whitespace corre despues del validador before: lo hace el."""
+    pedido = PedidoCrear(**{**EXPORTACION, "moneda": " eur ", "destino_pais": " de"})
+
+    assert pedido.moneda == Moneda.EUR
+    assert pedido.destino_pais == "DE"

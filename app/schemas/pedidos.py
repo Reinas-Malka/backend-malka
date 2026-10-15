@@ -18,6 +18,9 @@ from app.services.ventas.pedidos import EstadoPedido, Incoterm, Moneda
 
 # Un pedido real tiene pocas lineas; el tope evita cuerpos enormes.
 MAX_ITEMS = 100
+# La columna pedido_item.cantidad es Integer (4 bytes): por encima de esto
+# PostgreSQL rechaza el INSERT y la API responderia 500 en lugar de 422.
+MAX_CANTIDAD = 2_147_483_647
 
 
 class PedidoItemCrear(BaseModel):
@@ -30,7 +33,7 @@ class PedidoItemCrear(BaseModel):
 
     item_vendible_id: UUID
     raza_id: UUID
-    cantidad: int = Field(gt=0)
+    cantidad: int = Field(gt=0, le=MAX_CANTIDAD)
     # Mismo tamanio que la columna Numeric(14, 2): con un decimal de mas se
     # responde 422 en lugar de dejar que PostgreSQL redondee en silencio.
     precio_unitario: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
@@ -55,11 +58,12 @@ class PedidoCrear(BaseModel):
     items: list[PedidoItemCrear] = Field(min_length=1, max_length=MAX_ITEMS)
 
     # mode="before": corre antes del pattern y del enum, asi "de" llega como
-    # "DE" y "cpt" como "CPT".
+    # "DE" y "cpt" como "CPT". Tambien corre antes de str_strip_whitespace,
+    # por eso recorta aca: " eur" tiene que llegar como "EUR".
     @field_validator("destino_pais", "incoterm", "moneda", mode="before")
     @classmethod
     def en_mayusculas(cls, valor: object) -> object:
-        return valor.upper() if isinstance(valor, str) else valor
+        return valor.strip().upper() if isinstance(valor, str) else valor
 
 
 class PedidoItemRespuesta(BaseModel):

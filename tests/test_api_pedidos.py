@@ -399,6 +399,43 @@ def test_la_misma_clave_crea_un_solo_pedido(
     assert cantidad_de_pedidos(motor_owner, tenant) == 1
 
 
+def test_la_misma_clave_con_otro_pedido_es_409(
+    api: TestClient,
+    criaderos: tuple[uuid.UUID, Datos, Datos],
+    motor_owner: Engine,
+) -> None:
+    tenant, datos, _ = criaderos
+    headers = {**como(tenant), "Idempotency-Key": str(uuid.uuid4())}
+
+    primera = api.post(URL, json=nacional(datos), headers=headers)
+    otra = api.post(
+        URL,
+        json=nacional(datos, fecha_entrega_solicitada="2026-12-15"),
+        headers=headers,
+    )
+
+    assert primera.status_code == 201
+    assert otra.status_code == 409
+    assert codigo(otra) == "idempotency_key_reutilizada"
+    assert cantidad_de_pedidos(motor_owner, tenant) == 1
+
+
+def test_cantidad_que_no_entra_en_la_columna_es_422_y_no_500(
+    api: TestClient,
+    criaderos: tuple[uuid.UUID, Datos, Datos],
+    motor_owner: Engine,
+) -> None:
+    tenant, datos, _ = criaderos
+    cuerpo = nacional(datos)
+    cuerpo["items"][0]["cantidad"] = 3_000_000_000
+
+    respuesta = api.post(URL, json=cuerpo, headers=como(tenant))
+
+    assert respuesta.status_code == 422
+    assert codigo(respuesta) == "validacion"
+    assert cantidad_de_pedidos(motor_owner, tenant) == 0
+
+
 # --- Lectura: GET /api/v1/pedidos y GET /api/v1/pedidos/{id} ---
 
 

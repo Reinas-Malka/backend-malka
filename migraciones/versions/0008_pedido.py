@@ -174,6 +174,13 @@ def upgrade() -> None:
     op.create_index("ix_pedido_tenant_cliente", "pedido", ["tenant_id", "cliente_id"])
     # Para listar pedidos por estado (#36).
     op.create_index("ix_pedido_tenant_estado", "pedido", ["tenant_id", "estado"])
+    # GET /pedidos ordena por (creado_en DESC, id DESC) y pagina por cursor
+    # sobre ese orden: sin este indice, cada pagina ordena todo el tenant.
+    op.create_index(
+        "ix_pedido_tenant_creado",
+        "pedido",
+        ["tenant_id", sa.text("creado_en DESC"), sa.text("id DESC")],
+    )
 
     op.create_table(
         "pedido_item",
