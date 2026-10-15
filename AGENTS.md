@@ -41,4 +41,7 @@ ADRs, gana el documento y el conflicto se reporta como issue.
 - **Dos migraciones colgando de la misma revisión dan dos cabezas** y
   `alembic upgrade head` falla.
 - **ADRs, misma lógica**: numeración correlativa; el próximo arranca en el
-  número siguiente al último que esté en `main` (hoy, el 0010).
+  número siguiente al último que esté en `main`: mirá
+  `git ls-tree --name-only origin/main docs/adr/ | sort | tail -1` en vez
+  de confiar en un número escrito acá (este archivo decía 0010 cuando ya
+  había 0013).
