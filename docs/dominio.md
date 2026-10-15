@@ -236,11 +236,12 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          (NULL en nacional), incoterm (opcional, 11 de 2020),
                          fecha_entrega_solicitada
                          → exportación ⇔ cliente de tipo exportación
-  
-        pedido_item:         pedido_id, numero_linea (orden en el pedido),
+    pedido_item:         pedido_id, numero_linea (orden en el pedido),
                          item_vendible_id NOT NULL, raza_id NOT NULL,
                          cantidad, precio_unitario,
                          alicuota (copiada del ítem al crear)
+                         → neto, IVA y total se calculan (ADR 0008), no se
+                           guardan
 
 ### Notas al modelo (decisiones del 04/10, corregidas el 07/10)
 
