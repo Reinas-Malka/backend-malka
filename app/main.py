@@ -22,6 +22,7 @@ from app.routers import (
     materiales,
     nucleos,
     parques,
+    pedidos,
     razas,
 )
 from app.salud import Estado, verificar_dependencias
@@ -38,6 +39,7 @@ app = FastAPI(
 registrar_manejadores(app)
 instalar_observabilidad(app)
 app.include_router(clientes.router)
+app.include_router(pedidos.router)
 app.include_router(razas.router)
 app.include_router(madres.router)
 app.include_router(parques.router)
