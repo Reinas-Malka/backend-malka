@@ -60,3 +60,19 @@ siendo correcto y necesario ("la IA redacta y el código calcula").
 **Tratar el comprobante como un pedido congelado.** Descartada: mezcla una
 entidad calculada con una transcripta y reintroduce la numeración propia por
 la puerta de atrás.
+
+## Enmienda (16/10/2026)
+
+Contradicciones con `docs/dominio.md` encontradas en la revisión del 16/10
+(gana el dominio):
+
+- **El UNIQUE del comprobante incluye la letra:**
+  `UNIQUE (tenant_id, tipo, punto_venta, numero)`, que espeja la clave natural
+  de ARCA (dominio, "Notas al modelo"). Lo aplica el #108.
+- **Los totales del pedido se calculan en la moneda del pedido, sin tipo de
+  cambio.** El pedido no guarda tipo de cambio: lo fija ARCA al facturar
+  (dominio, "Pedidos"). Hoy `importes.py` exige tipo de cambio para toda
+  moneda que no sea ARS, así que no puede calcular un pedido en USD o EUR.
+  El tipo de cambio solo se exige al registrar el comprobante transcripto
+  (#108). El ajuste de `importes.py` va en su propio issue.
+

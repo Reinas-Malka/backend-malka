@@ -117,7 +117,10 @@ def validar_token(token: str, config: ConfigCognito) -> dict[str, Any]:
     except KeyError:
         # Si es un token real, el user pool cambio de claves: hay que
         # regenerar el archivo (ADR 0010). El kid es publico, se puede loguear.
-        logger.warning("token firmado con un kid que no esta en el JWKS: %s", kid)
+        logger.warning(
+            "token firmado con un kid que no esta en el JWKS",
+            extra={"campos": {"kid": kid}},
+        )
         raise NoAutenticadoError(
             "El token esta firmado con una clave que la API no conoce: hay que "
             "regenerar el JWKS versionado (ADR 0010).",

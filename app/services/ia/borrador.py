@@ -23,7 +23,7 @@ logger = logging.getLogger("malka")
 
 PROMPT_VERSION = "borrador_v1"
 
-# Campos fiscales que el modelo nunca escribe: los calcula el sistema.
+# Campos fiscales que el modelo nunca escribe: se transcriben del comprobante.
 # Se buscan como palabra completa para no rechazar palabras que los
 # contienen (totalidad) pero fallando hacia el lado seguro: si el modelo
 # los menciona, no se persiste la salida.
