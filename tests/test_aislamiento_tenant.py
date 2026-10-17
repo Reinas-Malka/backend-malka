@@ -40,6 +40,8 @@ ORDEN = (
     "cliente",
     "pedido",
     "pedido_item",
+    "embarque",
+    "documento_embarque",
     "idempotencia",
 )
 
@@ -129,6 +131,20 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         pedido=filas["pedido"],
         item=filas["item_vendible"],
         raza=filas["raza"],
+    )
+    insertar(
+        "embarque",
+        "INSERT INTO embarque (destino_pais, fecha_vuelo) "
+        "VALUES ('NZ', '2026-11-20') RETURNING id",
+    )
+    # La key lleva el tenant en el prefijo (CHECK de la 0010).
+    insertar(
+        "documento_embarque",
+        "INSERT INTO documento_embarque (embarque_id, tipo, numero, "
+        "archivo_s3_key, fecha) VALUES (:embarque, 'dte', 'DTE-1', :key, "
+        "'2026-11-18') RETURNING id",
+        embarque=filas["embarque"],
+        key=f"documentos/{tenant}/dte.pdf",
     )
     # La misma clave en los dos criaderos: es unica por tenant, no global (#25).
     insertar(

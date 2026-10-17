@@ -18,6 +18,7 @@ from app.observabilidad import instalar_observabilidad
 from app.routers import (
     bancos,
     clientes,
+    embarques,
     items_vendibles,
     madres,
     materiales,
@@ -48,6 +49,7 @@ app.include_router(bancos.router)
 app.include_router(nucleos.router)
 app.include_router(materiales.router)
 app.include_router(items_vendibles.router)
+app.include_router(embarques.router)
 
 
 class Salud(BaseModel):
