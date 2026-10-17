@@ -20,7 +20,7 @@ class EstadoEmbarque(StrEnum):
     CANCELADO = "cancelado"
 
 
-class TipoDocumento(StrEnum):
+class TipoDocumentoEmbarque(StrEnum):
     """Los 6 documentos de un envio, en el orden de docs/dominio.md."""
 
     FACTURA_E = "factura_e"
@@ -54,8 +54,8 @@ def normalizar_awb(valor: str) -> str:
 
 @dataclass(frozen=True)
 class Completitud:
-    presentes: tuple[TipoDocumento, ...]
-    faltantes: tuple[TipoDocumento, ...]
+    presentes: tuple[TipoDocumentoEmbarque, ...]
+    faltantes: tuple[TipoDocumentoEmbarque, ...]
 
     @property
     def completo(self) -> bool:
@@ -66,6 +66,6 @@ def completitud(tipos_cargados: Iterable[str]) -> Completitud:
     """Que documentos tiene el embarque y cuales faltan, en orden fijo."""
     cargados = set(tipos_cargados)
     return Completitud(
-        presentes=tuple(tipo for tipo in TipoDocumento if tipo in cargados),
-        faltantes=tuple(tipo for tipo in TipoDocumento if tipo not in cargados),
+        presentes=tuple(tipo for tipo in TipoDocumentoEmbarque if tipo in cargados),
+        faltantes=tuple(tipo for tipo in TipoDocumentoEmbarque if tipo not in cargados),
     )

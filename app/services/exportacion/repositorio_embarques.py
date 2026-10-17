@@ -33,7 +33,7 @@ from app.schemas.embarques import (
 )
 from app.services.exportacion.embarques import (
     EstadoEmbarque,
-    TipoDocumento,
+    TipoDocumentoEmbarque,
     completitud,
 )
 from app.services.repositorio import escribir, validar_cambios
@@ -89,7 +89,9 @@ LISTAR_DOCUMENTOS = text(
 LEER_TIPOS = text("SELECT tipo FROM documento_embarque WHERE embarque_id = :id")
 
 # Orden fijo de los 6 tipos (docs/dominio.md) para listar los documentos.
-ORDEN_DE_TIPOS = {str(tipo): posicion for posicion, tipo in enumerate(TipoDocumento)}
+ORDEN_DE_TIPOS = {
+    str(tipo): posicion for posicion, tipo in enumerate(TipoDocumentoEmbarque)
+}
 
 
 def no_encontrado() -> ErrorDeApi:
