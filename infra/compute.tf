@@ -73,9 +73,6 @@ resource "aws_lambda_function" "api" {
       COLA_DOCUMENTOS_URL = aws_sqs_queue.documentos.url
       COLA_INGESTA_URL    = aws_sqs_queue.ingesta.url
 
-      # Para firmar las URLs de subida y descarga de documentos (#102).
-      BUCKET_DOCUMENTOS = aws_s3_bucket.documentos.id
-
       # Rol sin privilegios: RLS se aplica siempre.
       DB_SECRET_NAME = aws_secretsmanager_secret.db_app.name
 
