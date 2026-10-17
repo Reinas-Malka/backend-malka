@@ -22,7 +22,7 @@ La cría de reinas es una producción encadenada y a contrarreloj: cada tanda pa
 
 Malka Suite unifica en un solo sistema:
 
-- **Producción y trazabilidad**: el ciclo de cada tanda etapa por etapa, con porcentajes de aceptación, material consumido y ocupación de los bancos.
+- **Producción y trazabilidad**: el ciclo de cada celda (de la tanda al banco), con % de fecundación y de extravío por tanda y por raza, material consumido y ocupación de parques y bancos.
 - **Ventas nacionales y de exportación**: pedidos y reservas que se descuentan de la disponibilidad real de la producción.
 - **Agente de facturación con IA**: redacta borradores de facturas, remitos y documentación aduanera que una persona revisa y aprueba antes de emitir.
 
@@ -575,7 +575,6 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 
 ### Pendientes conocidos
 
-- `POST /api/v1/clientes` todavía no acepta `Idempotency-Key`: llega con el #25.
 - `APP_VERSION` sigue fijo en `"latest"`: el commit desplegado se ve en el tag de la imagen en ECR y en el resumen de cada corrida de *Deploy*, pero todavía no en `/health`.
 - `terraform apply` sigue siendo manual, desde la máquina local.
 - La respuesta del pedido no incluye neto, IVA ni total: `calcular_importes` exige tipo de cambio para USD y EUR, y el pedido no lo guarda. Depende de enmendar el ADR 0006.

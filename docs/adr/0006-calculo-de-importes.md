@@ -73,3 +73,20 @@ Un módulo de dominio, `app/services/documentos/importes.py`, sin dependencias d
 **Usar `ValidacionError` de `app/errores.py`.** Ese módulo importa FastAPI, lo que metería infraestructura en el dominio. Descartada.
 
 **Que el modelo de IA calcule los importes.** Descartada por la regla del brief: el modelo puede equivocarse con los números y una factura no admite errores.
+
+## Enmienda (16/10/2026)
+
+Confirmado por la clienta y registrado en `docs/dominio.md` (gana sobre este ADR):
+
+- **Incoterm opcional (11/10):** un pedido es de exportación con cliente de tipo
+  exportación y `destino_pais` (ISO, distinto de `AR`). El incoterm es
+  opcional: tiene sentido en los envíos directos y queda vacío en los
+  consolidados. Lo implementa el PR #101 (#34).
+- **No hay ventas nacionales en moneda extranjera (11/10):** nacional va en
+  ARS y exportación en USD o EUR. El ejemplo de "venta nacional facturada en
+  dólares" ya no aplica.
+- **Alícuota de las reinas: 21%, confirmada el 11/10.** Sigue configurable por
+  ítem vendible. El "pendiente de confirmar" de arriba queda resuelto para la
+  alícuota; la fuente de la cotización no aplica, porque el tipo de cambio se
+  transcribe del comprobante (regla general del dominio).
+
