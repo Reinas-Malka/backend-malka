@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
 from app.routers import (
+    bancos,
     clientes,
     items_vendibles,
     madres,
@@ -43,6 +44,7 @@ app.include_router(pedidos.router)
 app.include_router(razas.router)
 app.include_router(madres.router)
 app.include_router(parques.router)
+app.include_router(bancos.router)
 app.include_router(nucleos.router)
 app.include_router(materiales.router)
 app.include_router(items_vendibles.router)

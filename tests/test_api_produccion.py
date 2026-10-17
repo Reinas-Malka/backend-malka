@@ -33,6 +33,7 @@ PARQUES = "/api/v1/parques"
 NUCLEOS = "/api/v1/nucleos"
 MATERIALES = "/api/v1/materiales"
 ITEMS = "/api/v1/items-vendibles"
+BANCOS = "/api/v1/bancos"
 
 # De hijas a padres, para poder borrar al limpiar.
 TABLAS = (
@@ -40,8 +41,11 @@ TABLAS = (
     "movimiento_material",
     "material",
     "item_vendible",
+    "celda",
     "nucleo",
     "parque",
+    "banco",
+    "tanda",
     "madre",
     "raza",
 )
@@ -193,6 +197,14 @@ RECURSOS = [
         invalido={"alicuota": "0.19"},
         duplicado="item_vendible_duplicado",
         no_encontrado="item_vendible_no_encontrado",
+    ),
+    Recurso(
+        url=BANCOS,
+        cuerpo=lambda api, t, n: {"identificador": f"B-{n:02d}"},
+        cambio={"capacidad_max": 300},
+        invalido={"capacidad_max": 0},
+        duplicado="banco_duplicado",
+        no_encontrado="banco_no_encontrado",
     ),
 ]
 
@@ -1092,4 +1104,109 @@ def test_item_vendible_rechaza_otra_alicuota(
     respuesta = api.post(
         ITEMS, json={"nombre": "Reina", "alicuota": alicuota}, headers=como(a)
     )
+    assert respuesta.status_code == 422
+
+
+# --- Banco (dominio del 16/10, migracion 0009) ---
+
+
+def _enjaular_en_banco(
+    motor_owner: Engine, tenant: uuid.UUID, banco_id: str, cantidad: int
+) -> None:
+    """Carga como duenio celdas enjauladas en el banco (todavia no hay #28)."""
+    with motor_owner.begin() as c:
+        fijar_tenant(c, tenant)
+        raza = c.execute(
+            text("INSERT INTO raza (nombre) VALUES ('Italiana') RETURNING id")
+        ).scalar_one()
+        tanda = c.execute(
+            text(
+                "INSERT INTO tanda (raza_id, fecha_traslarve) "
+                "VALUES (:raza, '2026-09-20') RETURNING id"
+            ),
+            {"raza": raza},
+        ).scalar_one()
+        parque = c.execute(
+            text(
+                "INSERT INTO parque (nombre, ubicacion, capacidad_max) "
+                "VALUES ('P banco', 'Predio', 10) RETURNING id"
+            )
+        ).scalar_one()
+        nucleo = c.execute(
+            text(
+                "INSERT INTO nucleo (parque_id, fila, posicion) "
+                "VALUES (:parque, 1, 1) RETURNING id"
+            ),
+            {"parque": parque},
+        ).scalar_one()
+        c.execute(
+            text(
+                "INSERT INTO celda (tanda_id, estado, nucleo_id, fecha_introduccion, "
+                "banco_id) SELECT :tanda, 'enjaulada', :nucleo, '2026-09-30', :banco "
+                "FROM generate_series(1, :cantidad)"
+            ),
+            {"tanda": tanda, "nucleo": nucleo, "banco": banco_id, "cantidad": cantidad},
+        )
+
+
+def test_banco_nuevo_con_capacidad_por_defecto(
+    api: TestClient, criaderos: Criaderos
+) -> None:
+    banco = crear(api, BANCOS, criaderos[0], {"identificador": "B-norte"})
+
+    assert banco["capacidad_max"] == 276  # confirmado por la clienta el 16/10
+    assert banco["reinas_en_banco"] == 0
+    assert banco["activo"] is True
+
+
+def test_banco_cuenta_sus_reinas_desde_las_celdas(
+    api: TestClient, criaderos: Criaderos, motor_owner: Engine
+) -> None:
+    tenant = criaderos[0]
+    banco = crear(api, BANCOS, tenant, {"identificador": "B-norte"})
+    _enjaular_en_banco(motor_owner, tenant, banco["id"], 4)
+
+    leido = api.get(f"{BANCOS}/{banco['id']}", headers=como(tenant)).json()
+
+    assert leido["reinas_en_banco"] == 4
+
+
+def test_capacidad_menor_que_las_reinas_del_banco_es_409(
+    api: TestClient, criaderos: Criaderos, motor_owner: Engine
+) -> None:
+    tenant = criaderos[0]
+    banco = crear(api, BANCOS, tenant, {"identificador": "B-norte"})
+    _enjaular_en_banco(motor_owner, tenant, banco["id"], 4)
+
+    respuesta = api.patch(
+        f"{BANCOS}/{banco['id']}", json={"capacidad_max": 3}, headers=como(tenant)
+    )
+
+    assert respuesta.status_code == 409
+    assert codigo(respuesta) == "capacidad_insuficiente"
+    assert respuesta.json()["error"]["details"]["reinas_en_banco"] == 4
+
+
+def test_banco_con_reinas_no_se_da_de_baja(
+    api: TestClient, criaderos: Criaderos, motor_owner: Engine
+) -> None:
+    tenant = criaderos[0]
+    banco = crear(api, BANCOS, tenant, {"identificador": "B-norte"})
+    _enjaular_en_banco(motor_owner, tenant, banco["id"], 2)
+
+    respuesta = api.delete(f"{BANCOS}/{banco['id']}", headers=como(tenant))
+
+    assert respuesta.status_code == 409
+    assert codigo(respuesta) == "banco_con_reinas"
+
+
+def test_capacidad_del_banco_como_texto_es_422(
+    api: TestClient, criaderos: Criaderos
+) -> None:
+    respuesta = api.post(
+        BANCOS,
+        json={"identificador": "B-1", "capacidad_max": "276"},
+        headers=como(criaderos[0]),
+    )
+
     assert respuesta.status_code == 422

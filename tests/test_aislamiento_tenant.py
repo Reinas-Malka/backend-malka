@@ -32,6 +32,7 @@ ORDEN = (
     "tanda",
     "parque",
     "nucleo",
+    "banco",
     "celda",
     "material",
     "movimiento_material",
@@ -85,6 +86,7 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         "VALUES (:parque, 1, 1) RETURNING id",
         parque=filas["parque"],
     )
+    insertar("banco", "INSERT INTO banco (identificador) VALUES ('B-01') RETURNING id")
     insertar(
         "celda",
         "INSERT INTO celda (tanda_id) VALUES (:tanda) RETURNING id",

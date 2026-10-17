@@ -182,6 +182,33 @@ class NucleoGuardado(NucleoRespuesta):
     advertencias: list[Advertencia] = []
 
 
+# --- banco (reinas enjauladas listas para despacho; dominio del 16/10) ---
+
+# Confirmada por la clienta el 16/10; igual que el DEFAULT de la migracion 0009.
+CAPACIDAD_BANCO_POR_DEFECTO = 276
+
+
+class BancoCrear(_Entrada):
+    identificador: Identificacion
+    # En reinas (no en nucleos, como el parque).
+    capacidad_max: Capacidad = CAPACIDAD_BANCO_POR_DEFECTO
+
+
+class BancoActualizar(_Entrada):
+    identificador: Identificacion | None = None
+    capacidad_max: Capacidad | None = None
+    activo: bool | None = None
+
+
+class BancoRespuesta(BaseModel):
+    id: UUID
+    identificador: str
+    capacidad_max: int
+    # Celdas enjauladas en el banco: se cuenta al leer, nunca se guarda.
+    reinas_en_banco: int
+    activo: bool
+
+
 # --- material ---
 
 
