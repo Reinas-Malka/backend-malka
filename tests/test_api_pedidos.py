@@ -667,3 +667,48 @@ def test_todos_los_roles_leen(
 def test_leer_sin_token_es_401(api: TestClient) -> None:
     assert api.get(URL).status_code == 401
     assert api.get(f"{URL}/{uuid.uuid4()}").status_code == 401
+
+
+# --- El tipo del cliente no cambia si ya tiene pedidos (revision del 16/10) ---
+
+CLIENTES = "/api/v1/clientes"
+
+A_EXPORTACION = {
+    "tipo": "exportacion",
+    "pais": "DE",
+    "condicion_iva": "cliente_exterior",
+    "cuit_o_tax_id": "DE987654321",
+}
+
+
+def test_cliente_con_pedidos_no_cambia_de_tipo(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    """Sus pedidos en ARS sin destino quedarian incoherentes con exportacion."""
+    tenant, datos, _ = criaderos
+    crear(api, tenant, nacional(datos))
+
+    respuesta = api.patch(
+        f"{CLIENTES}/{datos.nacional}", json=A_EXPORTACION, headers=como(tenant)
+    )
+
+    assert respuesta.status_code == 409
+    assert codigo(respuesta) == "cliente_con_pedidos"
+    leido = api.get(f"{CLIENTES}/{datos.nacional}", headers=como(tenant)).json()
+    assert leido["tipo"] == "nacional"
+
+
+def test_cliente_con_pedidos_puede_editar_otros_datos(
+    api: TestClient, criaderos: tuple[uuid.UUID, Datos, Datos]
+) -> None:
+    tenant, datos, _ = criaderos
+    crear(api, tenant, nacional(datos))
+
+    respuesta = api.patch(
+        f"{CLIENTES}/{datos.nacional}",
+        json={"nombre": "Apicola del Sur SRL"},
+        headers=como(tenant),
+    )
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["nombre"] == "Apicola del Sur SRL"

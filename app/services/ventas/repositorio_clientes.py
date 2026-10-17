@@ -109,6 +109,11 @@ def obtener(sesion: Session, cliente_id: UUID) -> ClienteRespuesta:
     return _a_respuesta(fila)
 
 
+# Un pedido ya cargado fijo su moneda y su destino segun el tipo del cliente
+# (docs/dominio.md, Pedidos): cambiarle el tipo los dejaria incoherentes.
+TIENE_PEDIDOS = text("SELECT EXISTS (SELECT 1 FROM pedido WHERE cliente_id = :id)")
+
+
 def actualizar(
     sesion: Session, cliente_id: UUID, cambios: ClienteActualizar
 ) -> ClienteRespuesta:
@@ -129,6 +134,18 @@ def actualizar(
     except ValidationError as error:
         # Mismo 422 y misma forma que si el error viniera en el body de un POST.
         raise RequestValidationError(error.errors()) from None
+
+    # El FOR UPDATE de OBTENER_PARA_EDITAR frena un alta de pedido simultanea
+    # para este cliente (la FK toma un lock que choca con el), asi que la
+    # consulta ve todos los pedidos.
+    if (
+        validado.tipo != actual.tipo
+        and sesion.execute(TIENE_PEDIDOS, {"id": cliente_id}).scalar_one()
+    ):
+        raise ConflictoError(
+            "El cliente tiene pedidos: no puede cambiar entre nacional y exportacion.",
+            code="cliente_con_pedidos",
+        )
 
     activo = actual.activo if cambios.activo is None else cambios.activo
     parametros = {
