@@ -1,8 +1,8 @@
-"""Esquema de produccion de la migracion 0003 contra un PostgreSQL real (#26).
+"""Esquema de produccion (migraciones 0003 y 0009) contra un PostgreSQL real.
 
-Cubre el DoD de la #26: aislamiento por tenant en cada tabla nueva (madre,
-parque, nucleo y celda), incluido el caso de fuga entre tenants,
-y las reglas de docs/dominio.md que hace cumplir la propia base.
+Cubre el DoD de la #26 y el dominio del 16/10: aislamiento por tenant en cada
+tabla (madre, parque, nucleo, celda y banco), incluido el caso de fuga entre
+tenants, y las reglas de docs/dominio.md que hace cumplir la propia base.
 """
 
 import uuid
@@ -18,7 +18,7 @@ from tests.conftest import crear_tenant, fijar_tenant
 
 pytestmark = pytest.mark.integration
 
-TABLAS_NUEVAS = ("madre", "parque", "nucleo", "celda")
+TABLAS_NUEVAS = ("madre", "parque", "nucleo", "celda", "banco")
 CELDAS_POR_TANDA = 3
 
 
@@ -28,12 +28,13 @@ class _Deshacer(Exception):
 
 @dataclass(frozen=True)
 class Criadero:
-    """Un tenant con una tanda de celdas y un parque con un nucleo."""
+    """Un tenant con una tanda de celdas, un parque con un nucleo y un banco."""
 
     tenant: uuid.UUID
     tanda: uuid.UUID
     parque: uuid.UUID
     nucleo: uuid.UUID
+    banco: uuid.UUID
 
 
 def _cargar_criadero(c: Connection, tenant: uuid.UUID) -> Criadero:
@@ -63,6 +64,7 @@ def _cargar_criadero(c: Connection, tenant: uuid.UUID) -> Criadero:
         "VALUES (:parque, 1, 1) RETURNING id",
         parque=parque,
     )
+    banco = insertar("INSERT INTO banco (identificador) VALUES ('B1') RETURNING id")
     c.execute(
         text(
             "INSERT INTO celda (tanda_id) "
@@ -70,7 +72,9 @@ def _cargar_criadero(c: Connection, tenant: uuid.UUID) -> Criadero:
         ),
         {"tanda": tanda, "cantidad": CELDAS_POR_TANDA},
     )
-    return Criadero(tenant=tenant, tanda=tanda, parque=parque, nucleo=nucleo)
+    return Criadero(
+        tenant=tenant, tanda=tanda, parque=parque, nucleo=nucleo, banco=banco
+    )
 
 
 @pytest.fixture(scope="module")
@@ -89,6 +93,7 @@ def criaderos(motor_owner: Engine) -> Iterator[tuple[Criadero, Criadero]]:
                 "celda",
                 "nucleo",
                 "parque",
+                "banco",
                 "tanda",
                 "madre",
                 "raza",
@@ -131,6 +136,7 @@ def test_cada_tenant_ve_solo_lo_suyo(
             "(tenant_id, nombre, ubicacion, capacidad_max) "
             "VALUES (:otro, 'intruso', 'Predio sur', 1)",
         ),
+        ("banco", "(tenant_id, identificador) VALUES (:otro, 'intruso')"),
     ],
 )
 def test_no_puede_escribir_en_otro_tenant(
@@ -274,5 +280,176 @@ def test_sin_modelo_de_etapas_de_tanda(motor_owner: Engine) -> None:
         ).scalar()
     assert tabla is None
     assert columna == 0
-    # El banco (post cosecha) se modela con la salida de reinas, no aca.
-    assert banco is None
+    # El banco volvio el 16/10, pero como tabla propia (0009), no como etapa.
+    assert banco is not None
+
+
+# --- dominio del 16/10 (migracion 0009) ---
+
+
+def _con_celdas(tenant: uuid.UUID, sql: str, **params: object) -> int:
+    """Corre un UPDATE sobre las celdas y deshace: devuelve las filas tocadas."""
+    with pytest.raises(_Deshacer), db.sesion_de_tenant(tenant) as s:
+        tocadas = s.execute(text(sql), params).rowcount
+        raise _Deshacer
+    return tocadas
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_tanda_sin_madre_se_acepta(criaderos: tuple[Criadero, Criadero]) -> None:
+    """Madres fuera de alcance: la tanda se identifica por su raza."""
+    a, _ = criaderos
+    with pytest.raises(_Deshacer), db.sesion_de_tenant(a.tenant) as s:
+        raza = s.execute(text("SELECT raza_id FROM tanda LIMIT 1")).scalar_one()
+        s.execute(
+            text(
+                "INSERT INTO tanda (raza_id, fecha_traslarve) "
+                "VALUES (:raza, '2026-10-16')"
+            ),
+            {"raza": raza},
+        )
+        raise _Deshacer
+
+
+@pytest.mark.usefixtures("con_motor_app")
+@pytest.mark.parametrize(
+    ("fila", "posicion"),
+    [(1, None), (None, 2), (0, 1), (1, -1)],
+    ids=["sin_posicion", "sin_fila", "fila_cero", "posicion_negativa"],
+)
+def test_continuadora_las_dos_y_positivas(
+    criaderos: tuple[Criadero, Criadero], fila: int | None, posicion: int | None
+) -> None:
+    a, _ = criaderos
+    with pytest.raises(IntegrityError, match="ck_tanda_continuadora"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(
+                text(
+                    "UPDATE tanda SET fila_continuadora = :fila, "
+                    "posicion_continuadora = :posicion"
+                ),
+                {"fila": fila, "posicion": posicion},
+            )
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_continuadora_completa_se_acepta(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    a, _ = criaderos
+    tocadas = _con_celdas(
+        a.tenant, "UPDATE tanda SET fila_continuadora = 3, posicion_continuadora = 7"
+    )
+    assert tocadas == 1
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_celda_descartada_necesita_fecha_de_descarte(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    a, _ = criaderos
+    with pytest.raises(IntegrityError, match="ck_celda_fecha_descarte"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(text("UPDATE celda SET estado = 'descartada'"))
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_fecha_de_descarte_solo_en_descartada(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    a, _ = criaderos
+    with pytest.raises(IntegrityError, match="ck_celda_fecha_descarte"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(text("UPDATE celda SET fecha_descarte = '2026-10-10'"))
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_celda_descartada_con_fecha(criaderos: tuple[Criadero, Criadero]) -> None:
+    a, _ = criaderos
+    tocadas = _con_celdas(
+        a.tenant,
+        "UPDATE celda SET estado = 'descartada', fecha_descarte = '2026-10-10'",
+    )
+    assert tocadas == CELDAS_POR_TANDA
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_celda_extraviada_necesita_fecha_de_extravio(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    a, _ = criaderos
+    with pytest.raises(IntegrityError, match="ck_celda_fecha_extravio"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(
+                text(
+                    "UPDATE celda SET estado = 'extraviada', nucleo_id = :nucleo, "
+                    "fecha_introduccion = '2026-10-15'"
+                ),
+                {"nucleo": a.nucleo},
+            )
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_celda_en_banco_solo_si_esta_enjaulada(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    a, _ = criaderos
+    with pytest.raises(IntegrityError, match="ck_celda_banco_al_enjaular"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(text("UPDATE celda SET banco_id = :banco"), {"banco": a.banco})
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_celda_enjaulada_en_su_banco(criaderos: tuple[Criadero, Criadero]) -> None:
+    a, _ = criaderos
+    tocadas = _con_celdas(
+        a.tenant,
+        "UPDATE celda SET estado = 'enjaulada', nucleo_id = :nucleo, "
+        "fecha_introduccion = '2026-10-15', banco_id = :banco",
+        nucleo=a.nucleo,
+        banco=a.banco,
+    )
+    assert tocadas == CELDAS_POR_TANDA
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_celda_no_puede_apuntar_a_un_banco_de_otro_tenant(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    """Segunda capa: la clave foranea compuesta (tenant_id, id)."""
+    a, b = criaderos
+    with pytest.raises(IntegrityError, match="fk_celda_banco_mismo_tenant"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(
+                text(
+                    "UPDATE celda SET estado = 'enjaulada', nucleo_id = :nucleo, "
+                    "fecha_introduccion = '2026-10-15', banco_id = :banco"
+                ),
+                {"nucleo": a.nucleo, "banco": b.banco},
+            )
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_banco_capacidad_por_defecto_y_positiva(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    a, _ = criaderos
+    with pytest.raises(_Deshacer), db.sesion_de_tenant(a.tenant) as s:
+        capacidad = s.execute(
+            text("SELECT capacidad_max FROM banco WHERE id = :id"), {"id": a.banco}
+        ).scalar_one()
+        assert capacidad == 276  # confirmado por la clienta el 16/10
+        raise _Deshacer
+    with pytest.raises(IntegrityError, match="ck_banco_capacidad_max"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(text("UPDATE banco SET capacidad_max = 0"))
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_identificador_de_banco_unico_por_criadero(
+    criaderos: tuple[Criadero, Criadero],
+) -> None:
+    a, _ = criaderos
+    with pytest.raises(IntegrityError, match="uq_banco_tenant_identificador"):
+        with db.sesion_de_tenant(a.tenant) as s:
+            s.execute(text("INSERT INTO banco (identificador) VALUES ('B1')"))
