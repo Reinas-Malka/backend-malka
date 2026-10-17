@@ -15,7 +15,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from app.main import app
-from app.services.exportacion.embarques import TipoDocumento
+from app.services.exportacion.embarques import TipoDocumentoEmbarque
 from tests.conftest import crear_tenant, emitir, fijar_tenant
 
 pytestmark = [
@@ -76,7 +76,9 @@ def embarque(**cambios: Any) -> dict[str, Any]:
     return {"destino_pais": "NZ", "fecha_vuelo": "2026-11-20", **cambios}
 
 
-def documento(tenant: uuid.UUID, tipo: TipoDocumento, **cambios: Any) -> dict[str, Any]:
+def documento(
+    tenant: uuid.UUID, tipo: TipoDocumentoEmbarque, **cambios: Any
+) -> dict[str, Any]:
     return {
         "tipo": tipo.value,
         "numero": f"{tipo.value.upper()}-0001",
@@ -93,7 +95,10 @@ def crear(api: TestClient, tenant: uuid.UUID, **cambios: Any) -> str:
 
 
 def cargar(
-    api: TestClient, tenant: uuid.UUID, embarque_id: str, tipos: list[TipoDocumento]
+    api: TestClient,
+    tenant: uuid.UUID,
+    embarque_id: str,
+    tipos: list[TipoDocumentoEmbarque],
 ) -> None:
     for tipo in tipos:
         respuesta = api.post(
@@ -112,7 +117,7 @@ def test_con_los_6_documentos_la_completitud_es_total(
 ) -> None:
     tenant, _ = criaderos
     embarque_id = crear(api, tenant, awb=AWB)
-    cargar(api, tenant, embarque_id, list(TipoDocumento))
+    cargar(api, tenant, embarque_id, list(TipoDocumentoEmbarque))
 
     respuesta = api.get(f"{URL}/{embarque_id}/completitud", headers=como(tenant))
 
@@ -120,7 +125,7 @@ def test_con_los_6_documentos_la_completitud_es_total(
     assert respuesta.json() == {
         "embarque_id": embarque_id,
         "completo": True,
-        "presentes": [tipo.value for tipo in TipoDocumento],
+        "presentes": [tipo.value for tipo in TipoDocumentoEmbarque],
         "faltantes": [],
     }
 
@@ -134,7 +139,11 @@ def test_con_5_documentos_lista_el_faltante(
         api,
         tenant,
         embarque_id,
-        [tipo for tipo in TipoDocumento if tipo is not TipoDocumento.DTE],
+        [
+            tipo
+            for tipo in TipoDocumentoEmbarque
+            if tipo is not TipoDocumentoEmbarque.DTE
+        ],
     )
 
     completitud = api.get(f"{URL}/{embarque_id}/completitud", headers=como(tenant))
@@ -159,7 +168,7 @@ def test_embarque_de_otro_criadero_responde_404(
         api.patch(f"{URL}/{de_b}", json={"estado": "cancelado"}, headers=como(a)),
         api.post(
             f"{URL}/{de_b}/documentos",
-            json=documento(a, TipoDocumento.DTE),
+            json=documento(a, TipoDocumentoEmbarque.DTE),
             headers=como(a),
         ),
     ]
@@ -183,7 +192,7 @@ def test_no_se_registra_un_archivo_de_otro_criadero(
 
     respuesta = api.post(
         f"{URL}/{embarque_id}/documentos",
-        json=documento(b, TipoDocumento.FACTURA_E),
+        json=documento(b, TipoDocumentoEmbarque.FACTURA_E),
         headers=como(a),
     )
 
@@ -230,11 +239,11 @@ def test_documento_repetido_es_409(
 ) -> None:
     tenant, _ = criaderos
     embarque_id = crear(api, tenant)
-    cargar(api, tenant, embarque_id, [TipoDocumento.GUIA_AEREA])
+    cargar(api, tenant, embarque_id, [TipoDocumentoEmbarque.GUIA_AEREA])
 
     respuesta = api.post(
         f"{URL}/{embarque_id}/documentos",
-        json=documento(tenant, TipoDocumento.GUIA_AEREA, numero="otra"),
+        json=documento(tenant, TipoDocumentoEmbarque.GUIA_AEREA, numero="otra"),
         headers=como(tenant),
     )
 
@@ -247,7 +256,12 @@ def test_lista_los_documentos_en_el_orden_de_los_6(
 ) -> None:
     tenant, _ = criaderos
     embarque_id = crear(api, tenant)
-    cargar(api, tenant, embarque_id, [TipoDocumento.DTE, TipoDocumento.FACTURA_E])
+    cargar(
+        api,
+        tenant,
+        embarque_id,
+        [TipoDocumentoEmbarque.DTE, TipoDocumentoEmbarque.FACTURA_E],
+    )
 
     respuesta = api.get(f"{URL}/{embarque_id}/documentos", headers=como(tenant))
 
@@ -349,7 +363,7 @@ def test_cancelado_no_se_edita_ni_recibe_documentos(
     )
     agregar = api.post(
         f"{URL}/{embarque_id}/documentos",
-        json=documento(tenant, TipoDocumento.DTE),
+        json=documento(tenant, TipoDocumentoEmbarque.DTE),
         headers=como(tenant),
     )
 
@@ -373,7 +387,7 @@ def test_solo_admin_y_ventas_escriben(
     )
     carga = api.post(
         f"{URL}/{embarque_id}/documentos",
-        json=documento(tenant, TipoDocumento.DTE),
+        json=documento(tenant, TipoDocumentoEmbarque.DTE),
         headers=como(tenant, rol),
     )
     lectura = api.get(f"{URL}/{embarque_id}/completitud", headers=como(tenant, rol))
@@ -396,7 +410,7 @@ def test_la_misma_clave_carga_un_solo_documento(
     tenant, _ = criaderos
     embarque_id = crear(api, tenant)
     headers = {**como(tenant), "Idempotency-Key": str(uuid.uuid4())}
-    cuerpo = documento(tenant, TipoDocumento.LISTA_EMPAQUE)
+    cuerpo = documento(tenant, TipoDocumentoEmbarque.LISTA_EMPAQUE)
 
     primera = api.post(f"{URL}/{embarque_id}/documentos", json=cuerpo, headers=headers)
     segunda = api.post(f"{URL}/{embarque_id}/documentos", json=cuerpo, headers=headers)

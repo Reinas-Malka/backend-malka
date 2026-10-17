@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.schemas.embarques import DocumentoCrear, EmbarqueCrear, EmbarqueGuardado
 from app.services.exportacion.embarques import (
-    TipoDocumento,
+    TipoDocumentoEmbarque,
     completitud,
     normalizar_awb,
 )
@@ -45,27 +45,29 @@ def test_awb_invalida(awb: str) -> None:
 
 
 def test_completitud_con_los_6_tipos() -> None:
-    resultado = completitud(tipo.value for tipo in TipoDocumento)
+    resultado = completitud(tipo.value for tipo in TipoDocumentoEmbarque)
 
     assert resultado.completo
     assert resultado.faltantes == ()
-    assert resultado.presentes == tuple(TipoDocumento)
+    assert resultado.presentes == tuple(TipoDocumentoEmbarque)
 
 
 def test_completitud_con_5_lista_el_faltante() -> None:
-    cargados = [tipo for tipo in TipoDocumento if tipo is not TipoDocumento.DTE]
+    cargados = [
+        tipo for tipo in TipoDocumentoEmbarque if tipo is not TipoDocumentoEmbarque.DTE
+    ]
 
     resultado = completitud(cargados)
 
     assert not resultado.completo
-    assert resultado.faltantes == (TipoDocumento.DTE,)
+    assert resultado.faltantes == (TipoDocumentoEmbarque.DTE,)
 
 
 def test_completitud_sin_documentos_faltan_todos_en_orden() -> None:
     resultado = completitud([])
 
     assert resultado.presentes == ()
-    assert resultado.faltantes == tuple(TipoDocumento)
+    assert resultado.faltantes == tuple(TipoDocumentoEmbarque)
 
 
 def test_embarque_normaliza_destino_y_awb() -> None:
@@ -122,7 +124,7 @@ def _documento(**cambios: str) -> dict[str, str]:
 def test_documento_valido() -> None:
     documento = DocumentoCrear.model_validate(_documento(numero="  E 0003-1  "))
 
-    assert documento.tipo is TipoDocumento.FACTURA_E
+    assert documento.tipo is TipoDocumentoEmbarque.FACTURA_E
     assert documento.numero == "E 0003-1"
 
 

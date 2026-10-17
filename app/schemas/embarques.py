@@ -24,7 +24,7 @@ from pydantic import (
 from app.schemas.produccion import Identificacion
 from app.services.exportacion.embarques import (
     EstadoEmbarque,
-    TipoDocumento,
+    TipoDocumentoEmbarque,
     normalizar_awb,
 )
 
@@ -114,7 +114,7 @@ class DocumentoCrear(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    tipo: TipoDocumento
+    tipo: TipoDocumentoEmbarque
     # Transcripto del documento real: no se calcula ni se genera.
     numero: Identificacion
     archivo_s3_key: ArchivoS3
@@ -132,7 +132,7 @@ class DocumentoCrear(BaseModel):
 class DocumentoRespuesta(BaseModel):
     id: UUID
     embarque_id: UUID
-    tipo: TipoDocumento
+    tipo: TipoDocumentoEmbarque
     numero: str
     archivo_s3_key: str
     fecha: date
@@ -143,5 +143,5 @@ class CompletitudRespuesta(BaseModel):
 
     embarque_id: UUID
     completo: bool
-    presentes: list[TipoDocumento]
-    faltantes: list[TipoDocumento]
+    presentes: list[TipoDocumentoEmbarque]
+    faltantes: list[TipoDocumentoEmbarque]
