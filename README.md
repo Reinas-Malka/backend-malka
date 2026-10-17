@@ -131,6 +131,8 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | POST | `/api/v1/embarques/{id}/documentos` | Carga uno de los 6 documentos (`tipo`, `numero` transcripto, `archivo_s3_key` bajo `documentos/<tenant_id>/`, `fecha`). 409 `documento_duplicado` o `embarque_cancelado`; 422 `archivo_de_otro_criadero`. |
 | GET | `/api/v1/embarques/{id}/documentos` | Los documentos del embarque, en el orden de los 6 tipos. |
 | GET | `/api/v1/embarques/{id}/completitud` | `{completo, presentes, faltantes}`: si el envío tiene los 6 documentos (la demo del 30/11). |
+| POST | `/api/v1/documentos/subidas` | Prepara la subida de un PDF, JPG o PNG de hasta 10 MB (`nombre`, `tipo`, `tamano`): registra sus datos y devuelve `url_subida` (PUT a S3 con el `Content-Type` firmado, vence en 5 min) y la `clave` (`documentos/<tenant_id>/…`), que después se usa como `archivo_s3_key`. Roles `admin` y `ventas`. 503 `subida_no_configurada` si falta `BUCKET_DOCUMENTOS`. |
+| GET | `/api/v1/documentos/descarga?clave=` | URL de descarga (vence en 2 min) de un documento del criadero. 404 `documento_no_encontrado` si la clave no está registrada o es de otro criadero. Todos los roles. |
 | POST | `/api/v1/razas` | Alta de raza. 409 `raza_duplicada`. |
 | POST | `/api/v1/madres` | Alta de madre reina. 409 `madre_duplicada`. |
 | POST | `/api/v1/parques` | Alta de parque de fecundación (`nombre`, `ubicacion`, `capacidad_max` en núcleos). 409 `parque_duplicado`. |
