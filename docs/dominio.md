@@ -1,7 +1,7 @@
 # Dominio de Malka Suite — reglas confirmadas por la clienta
 
-> Fuente de verdad del negocio. Confirmado por la clienta el 2, 4, 7 y
-> 11/10/2026.
+> Fuente de verdad del negocio. Confirmado por la clienta el 2, 4, 7, 11 y
+> 16/10/2026.
 > Si algo acá contradice código o ADRs existentes, **gana este documento** y la
 > contradicción se reporta como issue: no se "corrige" de forma silenciosa.
 
@@ -101,16 +101,33 @@ Seis documentos por envío, cinco emisores distintos:
 - Estados: `borrador → reservado → entregado | cancelado`. El alta crea
   siempre en `borrador`; las transiciones las valida el servicio (#36).
 
+### Disponibilidad, reservas y despacho (confirmado 15 y 16/10)
+
+- Un pedido **no sale de un banco fijo**: al despachar, los apicultores eligen
+  de uno o varios bancos según lo que pida el pedido.
+- La **disponibilidad para vender es por raza** y se calcula desde las celdas,
+  nunca se guarda: `disponible = celdas enjauladas de la raza − reservas
+  activas de la raza` (ADR 0014).
+- La **reserva va por raza, sin banco**: se decide antes de saber de qué
+  bancos van a salir las reinas.
+- **Despachar** = elegir celdas enjauladas de uno o varios bancos y pasarlas a
+  `despachada`; la reserva de esas líneas deja de estar activa. **Cancelar** el
+  pedido libera sus reservas.
+- La **existencia por banco** (cuántas reinas hay en cada banco) es solo
+  ubicación física. **No existe un "disponible por banco"**: la reserva no
+  tiene banco.
+
 ## Ciclo de cría — dos ejes temporales
 
 Modelarlo con una sola fecha ancla es el error a evitar.
 
-**Eje A — cría** (ancla: fecha de traslarve, D0): D0 traslarve · ~D10
-introducción de la celda al núcleo (antes de nacer) · D11 nacimiento.
+**Eje A — cría** (ancla: fecha de traslarve, D0): D0 traslarve (a la
+**iniciadora**) · D1 a la **continuadora** · ~D10 introducción de la celda al
+núcleo del **parque** (antes de nacer) · D11 nacimiento.
 
 **Eje B — fecundación** (ancla: introducción de la celda, I0): I0+1
 nacimiento · nac+4 a 5 madurez sexual · nac+10 fecundada **o extraviada** ·
-I0+16 enjaulado, lista para despacho (≈ D26).
+I0+16 enjaulado, lista para despacho o paso a un **banco** (≈ D26).
 
 Estados de la celda/reina individual (no de la tanda):
 
@@ -122,9 +139,9 @@ Dos estados terminales de **pérdida**, con causas distintas:
 
 - `descartada`: la cúpula nunca se introdujo al núcleo (no operculó, se
   perdió antes). Su motivo es **cerrar la fila**, NO medir aceptación: sin
-  reportes encima, igual que `celdas_operculadas`.
+  reportes encima, igual que `celdas_operculadas`. Guarda `fecha_descarte`.
 - `extraviada`: la reina nació, salió al vuelo nupcial y no volvió. No
-  modelarla como `fecundada = false`.
+  modelarla como `fecundada = false`. Guarda `fecha_extravio`.
 
 Los KPIs no cambian: el denominador sigue siendo **celdas introducidas**.
 
@@ -136,6 +153,8 @@ Los KPIs no cambian: el denominador sigue siendo **celdas introducidas**.
 - % de extravío = extraviadas / introducidas.
 - El % de aceptación post traslarve **no** es el indicador relevante;
   `celdas_operculadas` queda opcional y sin reportes encima.
+- Los % se calculan a nivel celda y se agregan **por tanda y por raza**. No hay
+  KPIs por madre: las madres quedan fuera de alcance (16/10).
 
 ## Materiales y consumo (confirmado 07/10)
 
@@ -206,22 +225,32 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
                          archivo_s3_key, fecha
                          → completitud = los 6 tipos presentes
 
-    madre:               identificacion, activo
+    madre:               identificacion, activo — OPCIONAL (16/10): fuera de
+                         alcance, sin trazabilidad por colmena madre
                          UNIQUE (tenant_id, identificacion)
-    tanda:               fecha_traslarve, madre_id NOT NULL, raza_id,
-                         retroactivo
+    tanda:               fecha_traslarve, raza_id NOT NULL, madre_id (NULL),
+                         retroactivo,
+                         fila_continuadora, posicion_continuadora (NULL;
+                         las dos o ninguna)
                          → celdas_trasladadas NO es columna: COUNT(*) de celda
-    celda:               tanda_id, nucleo_id (NULL hasta introducirla),
+    celda:               tanda_id NOT NULL, nucleo_id (NULL hasta
+                         introducirla), banco_id (NULL hasta pasar a banco),
                          estado, fecha_introduccion, fecha_nacimiento,
-                         fecha_fecundacion, fecha_enjaulado
+                         fecha_fecundacion, fecha_enjaulado,
+                         fecha_descarte (solo en descartada),
+                         fecha_extravio (solo en extraviada)
                          → los % se calculan a nivel celda y se agregan por
-                           tanda y por madre sin duplicar lógica
+                           tanda y por raza sin duplicar lógica
 
     parque:              nombre, ubicacion (texto simple, sin tabla predio),
                          capacidad_max (en núcleos), activo
     nucleo:              parque_id NOT NULL, fila, posicion, activo
                          UNIQUE (tenant_id, parque_id, fila, posicion)
-    banco:               FUERA DE FASE 1 (almacena reinas ya fecundadas)
+    banco:               identificador, capacidad_max (en reinas,
+                         DEFAULT 276), activo
+                         UNIQUE (tenant_id, identificador)
+                         → existencia = COUNT(*) de celdas enjauladas con
+                           ese banco_id, nunca una columna
 
     material:            nombre, unidad (texto corto, sin enum cerrado), activo
     movimiento_material: material_id, tipo (compra|consumo|ajuste),
@@ -257,9 +286,19 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
     **núcleo** y se espera la fecundación. `nucleo.parque_id NOT NULL` — el
     núcleo cuelga del parque. El parque lleva su **ubicación como texto
     simple** (pueden estar en distintos predios; sin tabla `predio`).
-  - **Banco**: donde se almacenan reinas **ya fecundadas y cosechadas** — un
-    momento posterior del ciclo, NO un contenedor de núcleos. **Fuera del
-    alcance de fase 1.**
+  - **Banco**: donde se almacenan reinas **ya fecundadas y enjauladas** — un
+    momento posterior del ciclo, NO un contenedor de núcleos. **Reincorporado
+    a la fase 1 el 16/10** para controlar el inventario listo para despacho,
+    con una `capacidad_max` de 276 reinas por defecto.
+- **Madres fuera de alcance (16/10)**: no hay calendario previo al traslarve
+  ni trazabilidad por colmena madre. La tanda se identifica por su
+  `raza_id`. La tabla `madre` queda y `tanda.madre_id` es opcional.
+- **Trazabilidad espacial transitoria en la tanda (16/10)**: la ubicación de
+  los primeros 10 días va en la propia tanda (`fila_continuadora`,
+  `posicion_continuadora`), sin tablas para iniciadoras ni continuadoras.
+- **Trazabilidad espacial definitiva en la celda (16/10)**: desde el día 10 la
+  celda guarda en qué `nucleo_id` del parque se fecundó, y al enjaularse en
+  qué `banco_id` se guardó. Los dos se completan a medida que avanza el ciclo.
 - La **alícuota de IVA vive en el catálogo de ítems vendibles** (enum de
   `importes.py`), no en el cliente. Valor para reinas: **21%, confirmado
   el 11/10** (el 04/10 había respondido "creo"); sigue configurable por ítem.
@@ -273,3 +312,17 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
   atributo del tenant. Un sistema que transcribe no puede ser más estricto
   que el sistema que emite; el UNIQUE con `tipo` es seguro tanto con un
   punto de venta para todas las letras como con puntos separados por tipo.
+
+## Celda, granularidad y experiencia de usuario (confirmado 16/10)
+
+- **Una fila = una celda, sin excepción.** Es lo único que permite el quiebre
+  espacial desde el día 10 (las celdas de una tanda se separan en núcleos y
+  bancos distintos) y la trazabilidad del producto final (reinas de una misma
+  tanda con destinos distintos).
+- **Rendimiento:** decenas de miles de filas por temporada son triviales para
+  PostgreSQL.
+- **Operaciones por lote (obligatorias):** la granularidad queda en el backend.
+  El usuario **nunca** opera celda por celda: trabaja con grupos y cantidades
+  (por ejemplo, "descartar 20 celdas de la tanda X") y el sistema actualiza
+  los estados y las fechas de cada celda. Los endpoints y las pantallas de
+  transiciones tienen que ser por lote.
