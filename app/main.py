@@ -18,6 +18,7 @@ from app.observabilidad import instalar_observabilidad
 from app.routers import (
     bancos,
     clientes,
+    disponibilidad,
     embarques,
     items_vendibles,
     madres,
@@ -42,6 +43,7 @@ registrar_manejadores(app)
 instalar_observabilidad(app)
 app.include_router(clientes.router)
 app.include_router(pedidos.router)
+app.include_router(disponibilidad.router)
 app.include_router(razas.router)
 app.include_router(madres.router)
 app.include_router(parques.router)

@@ -124,6 +124,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | POST | `/api/v1/pedidos` | Alta de pedido con sus líneas, siempre en `borrador`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201, o 422 si no es coherente con el cliente (ver [Pedidos](#pedidos)). |
 | GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` y `?cursor=` (ver más abajo). Todos los roles. |
 | GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
+| GET | `/api/v1/disponibilidad` | Reinas por raza calculadas desde las celdas (ADR 0014): `enjauladas`, `reservadas` (0 hasta #35), `disponible` y `bancos`, la existencia por banco, con `null` para las enjauladas que todavía no pasaron a un banco. Filtro opcional `?raza_id=`. Todos los roles. |
 | POST | `/api/v1/embarques` | Alta de embarque (`destino_pais` ISO ≠ AR, `fecha_vuelo`, `awb` opcional con dígito verificador IATA), siempre en `en_preparacion`. Roles `admin` y `ventas`. 409 `awb_duplicado`. |
 | GET | `/api/v1/embarques` | Embarques por fecha de vuelo, del más nuevo al más viejo, con `documentos_cargados`. Filtro opcional `?estado=`; paginado. Todos los roles. |
 | GET, PATCH | `/api/v1/embarques/{id}` | 404 si no existe o es de otro criadero. PATCH valida el resultado completo: en tránsito o entregado necesita `awb`; uno cancelado ya no se edita (409 `embarque_cancelado`). |
@@ -275,6 +276,15 @@ def crear_tanda(
 | `validacion` | El JSON no cumple el formato (campo faltante, tipo incorrecto, campo de más) |
 
 Son 422 y no 404 porque la ruta existe: lo que está mal es un dato del cuerpo.
+
+### Disponibilidad
+
+`GET /api/v1/disponibilidad` cuenta las celdas `enjaulada` de cada raza (#33). Nada se guarda: hay un solo stock, el de las celdas (ADR 0014).
+
+- `disponible = enjauladas − reservadas`. Las reservas valen 0 hasta que exista la tabla del #35.
+- `bancos` es solo ubicación física: dice dónde están las reinas para despachar. No hay "disponible por banco", porque la reserva va por raza.
+- Aparecen las razas activas, aunque tengan 0, y las inactivas solo si todavía les quedan reinas.
+- Por ahora es el saldo de hoy. La proyección a una fecha de entrega está pendiente de confirmar con la clienta.
 
 ---
 
