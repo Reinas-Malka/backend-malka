@@ -42,6 +42,7 @@ ORDEN = (
     "pedido_item",
     "embarque",
     "documento_embarque",
+    "documento",
     "idempotencia",
 )
 
@@ -145,6 +146,13 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         "'2026-11-18') RETURNING id",
         embarque=filas["embarque"],
         key=f"documentos/{tenant}/dte.pdf",
+    )
+    insertar(
+        "documento",
+        "INSERT INTO documento (archivo_s3_key, nombre, tipo_contenido, "
+        "tamano_bytes, subido_por) VALUES (:key, 'factura.pdf', "
+        "'application/pdf', 1024, 'sub-de-prueba') RETURNING id",
+        key=f"documentos/{tenant}/factura.pdf",
     )
     # La misma clave en los dos criaderos: es unica por tenant, no global (#25).
     insertar(
