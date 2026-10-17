@@ -124,6 +124,12 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | POST | `/api/v1/pedidos` | Alta de pedido con sus líneas, siempre en `borrador`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201, o 422 si no es coherente con el cliente (ver [Pedidos](#pedidos)). |
 | GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` y `?cursor=` (ver más abajo). Todos los roles. |
 | GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
+| POST | `/api/v1/embarques` | Alta de embarque (`destino_pais` ISO ≠ AR, `fecha_vuelo`, `awb` opcional con dígito verificador IATA), siempre en `en_preparacion`. Roles `admin` y `ventas`. 409 `awb_duplicado`. |
+| GET | `/api/v1/embarques` | Embarques por fecha de vuelo, del más nuevo al más viejo, con `documentos_cargados`. Filtro opcional `?estado=`; paginado. Todos los roles. |
+| GET, PATCH | `/api/v1/embarques/{id}` | 404 si no existe o es de otro criadero. PATCH valida el resultado completo: en tránsito o entregado necesita `awb`; uno cancelado ya no se edita (409 `embarque_cancelado`). |
+| POST | `/api/v1/embarques/{id}/documentos` | Carga uno de los 6 documentos (`tipo`, `numero` transcripto, `archivo_s3_key` bajo `documentos/<tenant_id>/`, `fecha`). 409 `documento_duplicado` o `embarque_cancelado`; 422 `archivo_de_otro_criadero`. |
+| GET | `/api/v1/embarques/{id}/documentos` | Los documentos del embarque, en el orden de los 6 tipos. |
+| GET | `/api/v1/embarques/{id}/completitud` | `{completo, presentes, faltantes}`: si el envío tiene los 6 documentos (la demo del 30/11). |
 | POST | `/api/v1/razas` | Alta de raza. 409 `raza_duplicada`. |
 | POST | `/api/v1/madres` | Alta de madre reina. 409 `madre_duplicada`. |
 | POST | `/api/v1/parques` | Alta de parque de fecundación (`nombre`, `ubicacion`, `capacidad_max` en núcleos). 409 `parque_duplicado`. |
