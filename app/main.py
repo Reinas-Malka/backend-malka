@@ -28,6 +28,7 @@ from app.routers import (
     parques,
     pedidos,
     razas,
+    tandas,
 )
 from app.salud import Estado, verificar_dependencias
 
@@ -52,6 +53,7 @@ app.include_router(bancos.router)
 app.include_router(nucleos.router)
 app.include_router(materiales.router)
 app.include_router(items_vendibles.router)
+app.include_router(tandas.router)
 app.include_router(embarques.router)
 app.include_router(documentos.router)
 
