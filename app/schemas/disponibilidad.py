@@ -22,7 +22,7 @@ class DisponibilidadReinas(BaseModel):
     raza_id: UUID
     raza: str
     enjauladas: int
-    # En cero hasta que exista la tabla de reservas (#35).
+    # Cantidad de las reservas activas de la raza (#35).
     reservadas: int
     # enjauladas - reservadas: se calcula siempre, nunca se guarda.
     disponible: int

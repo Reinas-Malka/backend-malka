@@ -40,6 +40,7 @@ ORDEN = (
     "cliente",
     "pedido",
     "pedido_item",
+    "reserva",
     "embarque",
     "documento_embarque",
     "documento",
@@ -131,6 +132,13 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         "VALUES (:pedido, 1, :item, :raza, 10, 35.00, 0.21) RETURNING id",
         pedido=filas["pedido"],
         item=filas["item_vendible"],
+        raza=filas["raza"],
+    )
+    insertar(
+        "reserva",
+        "INSERT INTO reserva (pedido_item_id, raza_id, cantidad) "
+        "VALUES (:linea, :raza, 10) RETURNING id",
+        linea=filas["pedido_item"],
         raza=filas["raza"],
     )
     insertar(
