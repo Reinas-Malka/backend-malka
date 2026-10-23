@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
+from app.fechas import hoy
 from app.main import app
 from app.services.produccion.tandas import CUPULAS_POR_CUADRO
 from tests.conftest import crear_tenant, emitir, fijar_tenant
@@ -45,8 +46,8 @@ Criaderos = tuple[uuid.UUID, uuid.UUID]
 
 def ultimo_domingo() -> date:
     """El domingo pasado mas cercano (nunca hoy: un retroactivo es pasado)."""
-    hoy = date.today()
-    return hoy - timedelta(days=(hoy.weekday() + 1) % 7 or 7)
+    hoy_ar = hoy()
+    return hoy_ar - timedelta(days=(hoy_ar.weekday() + 1) % 7 or 7)
 
 
 def fecha_pasada() -> date:
@@ -257,7 +258,7 @@ def test_celdas_por_estado_se_cuentan_al_leer(
                 "UPDATE celda SET estado = 'descartada', fecha_descarte = :hoy "
                 "WHERE id IN (SELECT id FROM celda WHERE tanda_id = :id LIMIT 20)"
             ),
-            {"id": creada["id"], "hoy": date.today()},
+            {"id": creada["id"], "hoy": hoy()},
         )
 
     esperado = {"trasladada": CUPULAS_POR_CUADRO - 20, "descartada": 20}
@@ -339,16 +340,16 @@ def test_retroactivo_de_hoy_o_fecha_futura_es_422(
 ) -> None:
     a, _ = criaderos
     refs = referencias(api, a)
-    hoy = date.today()
+    hoy_ar = hoy()
     respuestas = [
         api.post(
             TANDAS,
-            json=alta(refs, fecha_traslarve=hoy.isoformat(), retroactivo=True),
+            json=alta(refs, fecha_traslarve=hoy_ar.isoformat(), retroactivo=True),
             headers=como(a),
         ),
         api.post(
             TANDAS,
-            json=alta(refs, fecha_traslarve=(hoy + timedelta(days=1)).isoformat()),
+            json=alta(refs, fecha_traslarve=(hoy_ar + timedelta(days=1)).isoformat()),
             headers=como(a),
         ),
     ]
