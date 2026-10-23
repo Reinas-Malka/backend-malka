@@ -24,6 +24,7 @@ from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
 from app.errores import ConflictoError, ErrorDeApi, NoEncontradoError
+from app.fechas import hoy
 from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del_cursor
 from app.schemas.produccion import (
     Advertencia,
@@ -76,10 +77,11 @@ DESACTIVAR = text(
     "WHERE id = :id RETURNING id"
 )
 
+# La fecha llega siempre completa desde Python (hoy() si no vino): CURRENT_DATE
+# daria la fecha UTC, que de 21 a 24 h de Argentina ya es manana.
 INSERTAR_MOVIMIENTO = text(
     "INSERT INTO movimiento_material (material_id, tipo, cantidad, motivo, fecha) "
-    "VALUES (:material_id, :tipo, :cantidad, :motivo, "
-    "COALESCE(CAST(:fecha AS date), CURRENT_DATE)) "
+    "VALUES (:material_id, :tipo, :cantidad, :motivo, :fecha) "
     "RETURNING id, material_id, tipo, cantidad, tanda_id, motivo, fecha"
 )
 
@@ -201,7 +203,13 @@ def registrar_movimiento(
             code="material_inactivo",
         )
     movimiento = sesion.execute(
-        INSERTAR_MOVIMIENTO, {"material_id": material_id, **datos.model_dump()}
+        INSERTAR_MOVIMIENTO,
+        {
+            "material_id": material_id,
+            **datos.model_dump(),
+            # Sin fecha, es el dia de hoy en Argentina.
+            "fecha": datos.fecha or hoy(),
+        },
     ).one()
     stock = obtener(sesion, material_id).stock
 
