@@ -27,6 +27,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.fechas import hoy
 from app.services.documentos.importes import Alicuota
 from app.services.produccion.tandas import CUADROS_MAXIMOS, CUADROS_MINIMOS
 
@@ -259,7 +260,8 @@ class MovimientoCrear(_Entrada):
             raise ValueError("Una compra suma stock: la cantidad va en positivo.")
         if self.tipo == "ajuste" and self.motivo is None:
             raise ValueError("Un ajuste necesita un motivo.")
-        if self.fecha is not None and self.fecha > date.today():
+        # hoy() con la hora de Argentina: el servidor esta en UTC.
+        if self.fecha is not None and self.fecha > hoy():
             raise ValueError("La fecha del movimiento no puede ser futura.")
         return self
 
@@ -354,12 +356,13 @@ class TandaCrear(_Entrada):
 
     @model_validator(mode="after")
     def validar_tanda(self) -> Self:
-        hoy = date.today()
+        # hoy() con la hora de Argentina: el servidor esta en UTC.
+        hoy_ar = hoy()
         # El consumo toma esta fecha, y un movimiento no puede ser futuro.
-        if self.fecha_traslarve > hoy:
+        if self.fecha_traslarve > hoy_ar:
             raise ValueError("La fecha de traslarve no puede ser futura.")
         # Si no, marcar retroactivo saltearia la regla del domingo de hoy.
-        if self.retroactivo and self.fecha_traslarve == hoy:
+        if self.retroactivo and self.fecha_traslarve == hoy_ar:
             raise ValueError("Un registro retroactivo lleva una fecha pasada.")
         if (self.fila_continuadora is None) != (self.posicion_continuadora is None):
             raise ValueError(

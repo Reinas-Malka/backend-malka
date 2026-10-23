@@ -11,13 +11,14 @@ capacidad del parque (#29), stock y movimientos de material, y alicuotas.
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
+from app import fechas
 from app.main import app
 from app.services.documentos.importes import Alicuota
 from tests.conftest import crear_tenant, emitir, fijar_tenant
@@ -976,6 +977,21 @@ def test_movimiento_con_fecha_pasada(api: TestClient, criaderos: Criaderos) -> N
         headers=como(a),
     )
     assert respuesta.json()["fecha"] == ayer
+
+
+def test_movimiento_sin_fecha_toma_hoy_en_argentina(
+    api: TestClient, criaderos: Criaderos, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A las 22 h de Argentina (01 h UTC) se guarda el dia de Argentina."""
+    noche = datetime(2026, 10, 22, 1, 0, tzinfo=UTC)
+    monkeypatch.setattr(fechas, "_ahora_utc", lambda: noche)
+    a, _ = criaderos
+    material = crear_material(api, a)
+    respuesta = api.post(
+        movimientos(material), json={"tipo": "compra", "cantidad": 10}, headers=como(a)
+    )
+    assert respuesta.status_code == 201, respuesta.json()
+    assert respuesta.json()["fecha"] == "2026-10-21"
 
 
 def test_material_dado_de_baja_no_admite_movimientos(

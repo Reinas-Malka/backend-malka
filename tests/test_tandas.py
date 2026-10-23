@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import pytest
 from pydantic import ValidationError
 
+from app.fechas import hoy
 from app.schemas.produccion import TandaCrear
 from app.services.produccion import tandas
 from app.services.produccion.tandas import (
@@ -109,8 +110,8 @@ def test_alta_con_madre_y_continuadora() -> None:
         {"cuadros": None},
         {"cupulas": 270},
         {"tenant_id": "00000000-0000-0000-0000-000000000009"},
-        {"fecha_traslarve": (date.today() + timedelta(days=1)).isoformat()},
-        {"fecha_traslarve": date.today().isoformat(), "retroactivo": True},
+        {"fecha_traslarve": (hoy() + timedelta(days=1)).isoformat()},
+        {"fecha_traslarve": hoy().isoformat(), "retroactivo": True},
         {"raza_id": None},
         {"fila_continuadora": 2},
         {"posicion_continuadora": 7},
