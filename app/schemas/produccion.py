@@ -28,6 +28,7 @@ from pydantic import (
 )
 
 from app.services.documentos.importes import Alicuota
+from app.services.produccion.tandas import CUADROS_MAXIMOS, CUADROS_MINIMOS
 
 # Tope fisico razonable para fila, posicion y capacidad de un parque.
 MAXIMO_UBICACION = 1000
@@ -318,3 +319,77 @@ class ItemVendibleRespuesta(BaseModel):
     def sin_ceros_de_mas(cls, valor: Decimal) -> Decimal:
         # La base guarda numeric(5, 3): 0.210 sale como 0.21.
         return Alicuota(valor).value
+
+
+# --- tanda (#27) ---
+
+# Entero estricto: "2" o 2.5 son 422, igual que fila y posicion del nucleo.
+Cuadros = Annotated[int, Field(ge=CUADROS_MINIMOS, le=CUADROS_MAXIMOS, strict=True)]
+
+
+class TandaCrear(_Entrada):
+    """Alta de tanda: cuadros de madera, nunca un numero libre de cupulas.
+
+    La tanda se identifica por su raza (dominio del 16/10): la madre es
+    opcional, porque las madres quedan fuera de alcance.
+
+    El domingo se valida en el repositorio, no aca: tiene su propio codigo
+    de error (fecha_no_laborable) y aca saldria como "validacion".
+    """
+
+    raza_id: UUID
+    # Material de cupulas del que se descuenta el consumo.
+    material_id: UUID
+    fecha_traslarve: date
+    cuadros: Cuadros
+    # Opcional desde el 16/10 (tanda.madre_id NULL).
+    madre_id: UUID | None = None
+    # Ubicacion de los primeros 10 dias en la continuadora: las dos o
+    # ninguna (una tanda retroactiva puede no saberlas), como el CHECK
+    # ck_tanda_continuadora de la 0009.
+    fila_continuadora: Ordinal | None = None
+    posicion_continuadora: Ordinal | None = None
+    # Carga tardia de una tanda ya hecha: admite domingo.
+    retroactivo: bool = False
+
+    @model_validator(mode="after")
+    def validar_tanda(self) -> Self:
+        hoy = date.today()
+        # El consumo toma esta fecha, y un movimiento no puede ser futuro.
+        if self.fecha_traslarve > hoy:
+            raise ValueError("La fecha de traslarve no puede ser futura.")
+        # Si no, marcar retroactivo saltearia la regla del domingo de hoy.
+        if self.retroactivo and self.fecha_traslarve == hoy:
+            raise ValueError("Un registro retroactivo lleva una fecha pasada.")
+        if (self.fila_continuadora is None) != (self.posicion_continuadora is None):
+            raise ValueError(
+                "La fila y la posicion de la continuadora van las dos o ninguna."
+            )
+        return self
+
+
+class TandaRespuesta(BaseModel):
+    id: UUID
+    raza_id: UUID
+    madre_id: UUID | None
+    fecha_traslarve: date
+    retroactivo: bool
+    fila_continuadora: int | None
+    posicion_continuadora: int | None
+    # COUNT(*) de sus celdas, calculado al leer: nunca una columna.
+    celdas: int
+    # Las mismas celdas agrupadas por estado (solo los estados que tienen
+    # alguna), tambien calculado al leer. Ej.: {"trasladada": 135}.
+    celdas_por_estado: dict[str, int]
+
+
+class TandaCreada(TandaRespuesta):
+    """Respuesta del alta: la tanda, su consumo y el stock que queda.
+
+    Si el stock queda negativo, la tanda se crea igual y viene el aviso
+    stock_negativo (docs/dominio.md: no se bloquea).
+    """
+
+    consumo: MovimientoRespuesta
+    stock: Decimal
+    advertencias: list[Advertencia] = []
