@@ -6,3 +6,6 @@ alembic==1.14.0
 psycopg[binary]==3.2.3
 PyJWT[crypto]==2.15.1
 cryptography==50.0.2
+# Base de zonas horarias para zoneinfo (app/fechas.py): Windows y la imagen
+# de Lambda no la traen garantizada.
+tzdata==2025.2
