@@ -1,4 +1,4 @@
-"""Endpoints de pedidos (#34).
+"""Endpoints de pedidos (#34) y de sus reservas (#35).
 
 Leer puede cualquier rol del criadero; crear, solo admin y ventas. La
 validacion de formato vive en los schemas y la que necesita la base en el
@@ -18,7 +18,8 @@ from app.db import obtener_sesion
 from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
 from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
 from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
-from app.services.ventas import repositorio_pedidos
+from app.schemas.reservas import ReservaRespuesta
+from app.services.ventas import repositorio_pedidos, repositorio_reservas
 from app.services.ventas.pedidos import EstadoPedido
 
 router = APIRouter(prefix="/api/v1/pedidos", tags=["pedidos"])
@@ -64,3 +65,18 @@ def obtener_pedido(
     pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
 ) -> PedidoRespuesta:
     return repositorio_pedidos.obtener(sesion, pedido_id)
+
+
+# Sin cuerpo: reserva todas las lineas del pedido, con su raza y cantidad.
+# Sin Idempotency-Key: un reintento encuentra el pedido ya reservado y
+# responde 409 pedido_no_reservable, sin reservar dos veces.
+@router.post(
+    "/{pedido_id}/reservas",
+    status_code=201,
+    response_model=list[ReservaRespuesta],
+    dependencies=SOLO_ESCRITURA,
+)
+def reservar_pedido(
+    pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
+) -> list[ReservaRespuesta]:
+    return repositorio_reservas.reservar(sesion, pedido_id)

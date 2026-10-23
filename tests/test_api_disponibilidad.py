@@ -2,7 +2,8 @@
 
 El stock sale de las celdas: solo cuentan las enjauladas, esten o no en un
 banco. Las celdas se cargan directo como duenio porque todavia no existen las
-transiciones por lote (#28), y las reservas valen cero hasta #35.
+transiciones por lote (#28). Las reservas activas (#35) se descuentan; se
+cargan directo para probar cada estado sin depender del despacho (#36).
 """
 
 import uuid
@@ -25,7 +26,19 @@ pytestmark = [
 URL = "/api/v1/disponibilidad"
 
 # De hijas a padres, para poder borrar al limpiar.
-TABLAS = ("celda", "nucleo", "parque", "banco", "tanda", "raza")
+TABLAS = (
+    "reserva",
+    "pedido_item",
+    "pedido",
+    "cliente",
+    "item_vendible",
+    "celda",
+    "nucleo",
+    "parque",
+    "banco",
+    "tanda",
+    "raza",
+)
 
 Criaderos = tuple[uuid.UUID, uuid.UUID]
 
@@ -79,6 +92,7 @@ class Criadero:
             "VALUES (:parque, 1, 1) RETURNING id",
             parque=parque,
         )
+        self._cliente_e_item: tuple[uuid.UUID, uuid.UUID] | None = None
 
     def _id(self, sql: str, **parametros: Any) -> uuid.UUID:
         return uuid.UUID(str(self.c.execute(text(sql), parametros).scalar_one()))
@@ -129,6 +143,46 @@ class Criadero:
                 "banco": banco,
                 "cantidad": cantidad,
             },
+        )
+
+    def reserva(self, raza: uuid.UUID, cantidad: int, estado: str = "activa") -> None:
+        """Un pedido de una linea con su reserva, cargados sin la API."""
+        # Cliente e item son unicos por criadero: se crean con la primera.
+        if self._cliente_e_item is None:
+            self._cliente_e_item = (
+                self._id(
+                    "INSERT INTO cliente (nombre, pais, tipo, condicion_iva, "
+                    "cuit_o_tax_id) VALUES ('Bienenzucht GmbH', 'DE', "
+                    "'exportacion', 'cliente_exterior', 'DE123456789') RETURNING id"
+                ),
+                self._id(
+                    "INSERT INTO item_vendible (nombre) "
+                    "VALUES ('Reina fecundada') RETURNING id"
+                ),
+            )
+        cliente, item = self._cliente_e_item
+        pedido = self._id(
+            "INSERT INTO pedido (cliente_id, moneda, destino_pais, "
+            "fecha_entrega_solicitada) "
+            "VALUES (:cliente, 'EUR', 'DE', '2026-11-30') RETURNING id",
+            cliente=cliente,
+        )
+        linea = self._id(
+            "INSERT INTO pedido_item (pedido_id, numero_linea, item_vendible_id, "
+            "raza_id, cantidad, precio_unitario, alicuota) "
+            "VALUES (:pedido, 1, :item, :raza, :cantidad, 35.00, 0.21) RETURNING id",
+            pedido=pedido,
+            item=item,
+            raza=raza,
+            cantidad=cantidad,
+        )
+        self._id(
+            "INSERT INTO reserva (pedido_item_id, raza_id, cantidad, estado) "
+            "VALUES (:linea, :raza, :cantidad, :estado) RETURNING id",
+            linea=linea,
+            raza=raza,
+            cantidad=cantidad,
+            estado=estado,
         )
 
 
@@ -250,6 +304,106 @@ def test_cada_raza_tiene_su_propio_saldo(
     # El mismo banco aparece en las dos, cada una con sus reinas.
     assert razas["Italiana"]["bancos"][0]["reinas"] == 4
     assert razas["Carniola"]["bancos"][0]["reinas"] == 7
+
+
+def test_las_reservas_activas_descuentan_del_disponible(
+    api: TestClient, criaderos: Criaderos, cargar: Cargar
+) -> None:
+    with cargar(criaderos[0]) as criadero:
+        raza = criadero.raza("Italiana")
+        criadero.celdas(criadero.tanda(raza), "enjaulada", 10)
+        criadero.reserva(raza, 3)
+        criadero.reserva(raza, 4)
+
+    (italiana,) = leer(api, criaderos[0])
+
+    assert italiana["enjauladas"] == 10
+    assert italiana["reservadas"] == 7
+    assert italiana["disponible"] == 3
+
+
+@pytest.mark.parametrize("estado", ["consumida", "liberada"])
+def test_una_reserva_despachada_o_cancelada_deja_de_contar(
+    api: TestClient, criaderos: Criaderos, cargar: Cargar, estado: str
+) -> None:
+    with cargar(criaderos[0]) as criadero:
+        raza = criadero.raza("Italiana")
+        criadero.celdas(criadero.tanda(raza), "enjaulada", 10)
+        criadero.reserva(raza, 2)
+        criadero.reserva(raza, 5, estado)
+
+    (italiana,) = leer(api, criaderos[0])
+
+    assert italiana["reservadas"] == 2
+    assert italiana["disponible"] == 8
+
+
+def test_cada_reserva_cuenta_una_vez_aunque_haya_varias_celdas(
+    api: TestClient, criaderos: Criaderos, cargar: Cargar
+) -> None:
+    # Celdas en dos tandas y dos bancos: una suma mal unida a las celdas
+    # contaria la reserva una vez por celda.
+    with cargar(criaderos[0]) as criadero:
+        raza = criadero.raza("Italiana")
+        sur, norte = criadero.banco("B-sur"), criadero.banco("B-norte")
+        criadero.celdas(criadero.tanda(raza), "enjaulada", 4, sur)
+        criadero.celdas(criadero.tanda(raza), "enjaulada", 6, norte)
+        criadero.reserva(raza, 3)
+
+    (italiana,) = leer(api, criaderos[0])
+
+    assert italiana["reservadas"] == 3
+    assert italiana["disponible"] == 7
+
+
+def test_las_reservas_son_de_su_raza(
+    api: TestClient, criaderos: Criaderos, cargar: Cargar
+) -> None:
+    with cargar(criaderos[0]) as criadero:
+        italiana = criadero.raza("Italiana")
+        carniola = criadero.raza("Carniola")
+        criadero.celdas(criadero.tanda(italiana), "enjaulada", 5)
+        criadero.celdas(criadero.tanda(carniola), "enjaulada", 5)
+        criadero.reserva(italiana, 4)
+
+    razas = {fila["raza"]: fila for fila in leer(api, criaderos[0])}
+
+    assert razas["Italiana"]["disponible"] == 1
+    assert razas["Carniola"]["reservadas"] == 0
+    assert razas["Carniola"]["disponible"] == 5
+
+
+def test_una_raza_activa_sin_reinas_puede_quedar_en_negativo(
+    api: TestClient, criaderos: Criaderos, cargar: Cargar
+) -> None:
+    # Pasa si se descartan reinas que ya estaban reservadas: el numero
+    # negativo avisa que hay pedidos que no se van a poder cumplir.
+    with cargar(criaderos[0]) as criadero:
+        raza = criadero.raza("Italiana")
+        criadero.reserva(raza, 2)
+
+    (italiana,) = leer(api, criaderos[0])
+
+    assert italiana["enjauladas"] == 0
+    assert italiana["disponible"] == -2
+
+
+def test_las_reservas_de_otro_criadero_no_descuentan(
+    api: TestClient, criaderos: Criaderos, cargar: Cargar
+) -> None:
+    a, b = criaderos
+    with cargar(a) as criadero:
+        italiana_a = criadero.raza("Italiana")
+        criadero.celdas(criadero.tanda(italiana_a), "enjaulada", 5)
+        criadero.reserva(italiana_a, 5)
+    with cargar(b) as criadero:
+        italiana_b = criadero.raza("Italiana")
+        criadero.celdas(criadero.tanda(italiana_b), "enjaulada", 5)
+
+    (fila_b,) = leer(api, b)
+
+    assert fila_b["reservadas"] == 0
+    assert fila_b["disponible"] == 5
 
 
 def test_filtro_por_raza(api: TestClient, criaderos: Criaderos, cargar: Cargar) -> None:

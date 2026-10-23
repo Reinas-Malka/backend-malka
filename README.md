@@ -124,7 +124,8 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | POST | `/api/v1/pedidos` | Alta de pedido con sus líneas, siempre en `borrador`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201, o 422 si no es coherente con el cliente (ver [Pedidos](#pedidos)). |
 | GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` y `?cursor=` (ver más abajo). Todos los roles. |
 | GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
-| GET | `/api/v1/disponibilidad` | Reinas por raza calculadas desde las celdas (ADR 0014): `enjauladas`, `reservadas` (0 hasta #35), `disponible` y `bancos`, la existencia por banco, con `null` para las enjauladas que todavía no pasaron a un banco. Filtro opcional `?raza_id=`. Todos los roles. |
+| POST | `/api/v1/pedidos/{id}/reservas` | Reserva todas las líneas de un pedido en `borrador`, sin cuerpo, y lo pasa a `reservado`. Roles `admin` y `ventas`. 201 con las reservas; 409 `stock_insuficiente` con el disponible por raza, o `pedido_no_reservable` si no está en borrador (ver [Reservas](#reservas)). |
+| GET | `/api/v1/disponibilidad` | Reinas por raza calculadas desde las celdas (ADR 0014): `enjauladas`, `reservadas` (las reservas activas), `disponible` y `bancos`, la existencia por banco, con `null` para las enjauladas que todavía no pasaron a un banco. Filtro opcional `?raza_id=`. Todos los roles. |
 | POST | `/api/v1/embarques` | Alta de embarque (`destino_pais` ISO ≠ AR, `fecha_vuelo`, `awb` opcional con dígito verificador IATA), siempre en `en_preparacion`. Roles `admin` y `ventas`. 409 `awb_duplicado`. |
 | GET | `/api/v1/embarques` | Embarques por fecha de vuelo, del más nuevo al más viejo, con `documentos_cargados`. Filtro opcional `?estado=`; paginado. Todos los roles. |
 | GET, PATCH | `/api/v1/embarques/{id}` | 404 si no existe o es de otro criadero. PATCH valida el resultado completo: en tránsito o entregado necesita `awb`; uno cancelado ya no se edita (409 `embarque_cancelado`). |
@@ -286,10 +287,29 @@ Son 422 y no 404 porque la ruta existe: lo que está mal es un dato del cuerpo.
 
 `GET /api/v1/disponibilidad` cuenta las celdas `enjaulada` de cada raza (#33). Nada se guarda: hay un solo stock, el de las celdas (ADR 0014).
 
-- `disponible = enjauladas − reservadas`. Las reservas valen 0 hasta que exista la tabla del #35.
+- `disponible = enjauladas − reservadas`, donde `reservadas` suma las reservas activas de la raza (#35). Puede dar negativo si se pierden reinas que ya estaban reservadas.
 - `bancos` es solo ubicación física: dice dónde están las reinas para despachar. No hay "disponible por banco", porque la reserva va por raza.
 - Aparecen las razas activas, aunque tengan 0, y las inactivas solo si todavía les quedan reinas.
 - Por ahora es el saldo de hoy. La proyección a una fecha de entrega está pendiente de confirmar con la clienta.
+
+### Reservas
+
+`POST /api/v1/pedidos/{id}/reservas` reserva las reinas de un pedido sin vender más de las que hay (#35, ADR 0014). Todo pasa en una sola transacción:
+
+1. Lee el pedido con `FOR UPDATE`: el mismo pedido no se reserva dos veces a la vez.
+2. Toma un `pg_advisory_xact_lock` por cada raza del pedido, con clave `(tenant, raza)` y siempre en el mismo orden. Otra reserva de esa raza espera; una de otra raza o de otro criadero, no.
+3. Con el lock tomado, recalcula el disponible con el mismo cálculo que `GET /disponibilidad`, así ve lo que la reserva anterior acaba de confirmar.
+4. Si alguna raza no alcanza, responde 409 `stock_insuficiente` y no guarda nada. Las líneas de una misma raza se suman:
+
+```json
+{"error": {"code": "stock_insuficiente", "details": {"razas": [
+  {"raza_id": "...", "pedidas": 8, "disponible": 5, "faltan": 3}
+]}}}
+```
+
+5. Si alcanzan todas, crea una reserva `activa` por línea y el pedido pasa a `reservado`.
+
+Las reservas van por raza, sin banco: los bancos se eligen al despachar (#36), que las pasa a `consumida`; cancelar el pedido las pasa a `liberada`. No vencen. `tests/test_concurrencia_reservas.py` prueba 20 pedidos de 10 reinas contra 100: se reservan exactamente 10.
 
 ---
 
