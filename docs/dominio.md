@@ -1,7 +1,7 @@
 # Dominio de Malka Suite — reglas confirmadas por la clienta
 
-> Fuente de verdad del negocio. Confirmado por la clienta el 2, 4, 7, 11 y
-> 16/10/2026.
+> Fuente de verdad del negocio. Confirmado por la clienta el 2, 4, 7, 11,
+> 16 y 23/10/2026.
 > Si algo acá contradice código o ADRs existentes, **gana este documento** y la
 > contradicción se reporta como issue: no se "corrige" de forma silenciosa.
 
@@ -135,26 +135,69 @@ Estados de la celda/reina individual (no de la tanda):
     trasladada → introducida → nacida → madura → (fecundada | extraviada)
                → enjaulada → despachada
 
-Dos estados terminales de **pérdida**, con causas distintas:
+### Lo que se registra en el campo (confirmado 23/10)
 
-- `descartada`: la cúpula nunca se introdujo al núcleo (no operculó, se
-  perdió antes). Su motivo es **cerrar la fila**, NO medir aceptación: sin
-  reportes encima, igual que `celdas_operculadas`. Guarda `fecha_descarte`.
-- `extraviada`: la reina nació, salió al vuelo nupcial y no volvió. No
-  modelarla como `fecundada = false`. Guarda `fecha_extravio`.
+El productor no carga cada paso biológico: **carga tres operaciones por
+tanda**, todas por lote (ver "Celda, granularidad y experiencia de usuario"):
 
-Los KPIs no cambian: el denominador sigue siendo **celdas introducidas**.
+1. **Introducir:** elige el parque, la cantidad y la fecha; **no elige
+   núcleos**. El sistema reparte las celdas en forma pareja entre los núcleos
+   activos del parque, empezando por los que tienen menos celdas ocupadas
+   (las que todavía no se cosecharon) y en orden de fila y posición, y
+   devuelve cómo quedó el reparto. Sin núcleos activos no hay introducción.
+   - Un **núcleo es un baby nuc**. Sus dos compartimentos no se registran.
+   - **No hay tope de celdas por núcleo**: el reparto es parejo y sin límite.
+2. **Cosechar:** la cosecha de una tanda se hace **en un día** y se cuenta
+   **por tanda** (no por baby nuc). Se carga cuántas reinas se cosecharon y la
+   fecha. Esas celdas pasan a `enjaulada`, que es lo que suma stock para
+   vender (ADR 0014). **Las celdas de la tanda que estaban en el parque y no se
+   cosecharon pasan solas a `descartada`**, con la fecha de la cosecha: nadie
+   cuenta las pérdidas, salen de la resta (120 introducidas y 95 cosechadas =
+   95 enjauladas + 25 descartadas). Una tanda se cosecha una sola vez.
+3. **Pasar a banco** las enjauladas, con el control de capacidad del banco.
 
-**KPIs:**
+Antes de introducir también se puede **descartar** lo que no se va a usar.
 
-- Principal: % de fecundación = fecundadas / celdas introducidas al núcleo.
-- Secundario: fecundadas / nacidas (separa falla de nacimiento de falla de
-  fecundación).
-- % de extravío = extraviadas / introducidas.
+- **Nacimiento, madurez y fecundación no se cargan**: con la cosecha alcanza.
+  Los estados `nacida`, `madura`, `fecundada` y `extraviada` siguen en el
+  modelo, pero en fase 1 no hay operaciones que los usen.
+- **No hace falta saber de qué núcleo salió cada reina**: la cosecha elige qué
+  celdas de la tanda pasan a enjaulada. El núcleo de la celda sirve para
+  saber la ocupación del parque, no para trazar cada reina.
+
+`descartada` es el estado terminal de **pérdida**, con dos orígenes que se
+distinguen sin un estado nuevo:
+
+- **Sin núcleo:** la cúpula nunca se introdujo (no operculó, se perdió
+  antes). Su motivo es **cerrar la fila**, NO medir aceptación: sin reportes
+  encima, igual que `celdas_operculadas`.
+- **Con núcleo:** se introdujo y no llegó a reina (el resto de la cosecha).
+
+Las dos guardan `fecha_descarte`. `extraviada` (la reina nació, salió al vuelo
+nupcial y no volvió) queda en el modelo, pero en fase 1 esas pérdidas se
+registran como descarte con núcleo.
+
+**KPIs** (redefinidos el 23/10). El denominador sigue siendo **celdas
+introducidas**:
+
+- **% de cosecha** = cosechadas (enjauladas, más las que ya se despacharon) /
+  celdas introducidas al núcleo. Es el % de fecundación del dominio: una reina
+  cosechada es una reina fecundada.
+- **% de pérdida en el parque** = descartadas con núcleo / introducidas.
+- El indicador secundario (fecundadas / nacidas) y el % de extravío **salen de
+  fase 1**: nacimiento y extravío no se cargan.
 - El % de aceptación post traslarve **no** es el indicador relevante;
   `celdas_operculadas` queda opcional y sin reportes encima.
 - Los % se calculan a nivel celda y se agregan **por tanda y por raza**. No hay
   KPIs por madre: las madres quedan fuera de alcance (16/10).
+
+### Fechas de las tareas humanas
+
+- **El traslarve no se hace los domingos**: el alta de una tanda con
+  `fecha_traslarve` en domingo se rechaza, salvo un registro **retroactivo**
+  (la carga tardía de una tanda ya hecha). Viene del brief original y lo usa el
+  alta de tanda (#27). **Pendiente de confirmar con la clienta.**
+- Las fechas biológicas son días calendario: el domingo no aplica.
 
 ## Materiales y consumo (confirmado 07/10)
 
@@ -296,9 +339,12 @@ Implementado como lifecycle rules por prefijo: un cambio de plazo es una línea.
 - **Trazabilidad espacial transitoria en la tanda (16/10)**: la ubicación de
   los primeros 10 días va en la propia tanda (`fila_continuadora`,
   `posicion_continuadora`), sin tablas para iniciadoras ni continuadoras.
-- **Trazabilidad espacial definitiva en la celda (16/10)**: desde el día 10 la
-  celda guarda en qué `nucleo_id` del parque se fecundó, y al enjaularse en
-  qué `banco_id` se guardó. Los dos se completan a medida que avanza el ciclo.
+- **Ubicación en la celda (16/10, ajustado el 23/10)**: desde el día 10 la
+  celda guarda en qué `nucleo_id` del parque se introdujo, y al enjaularse en
+  qué `banco_id` se guardó. El núcleo sirve para la **ocupación del parque**,
+  no para trazar de qué baby nuc salió cada reina: la cosecha es por tanda y
+  esa trazabilidad no hace falta (23/10). El banco sí es la ubicación real de
+  cada reina enjaulada.
 - La **alícuota de IVA vive en el catálogo de ítems vendibles** (enum de
   `importes.py`), no en el cliente. Valor para reinas: **21%, confirmado
   el 11/10** (el 04/10 había respondido "creo"); sigue configurable por ítem.
