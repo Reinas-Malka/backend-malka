@@ -39,7 +39,11 @@ def puede_pasar(estado_origen: EstadoPedido, estado_destino: EstadoPedido) -> bo
 def validar_despacho(
     reservadas: Mapping[UUID, int], despachadas: Mapping[UUID, int]
 ) -> None:
-    """Valida que el despacho sea exactamente igual a la reserva"""
+    """Revisa que el despacho cubra exactamente las reservas activas del pedido.
+
+    Sin entrega parcial: cada linea sale con la cantidad que tiene reservada.
+    Lanza ValueError con el primer problema que encuentra.
+    """
     sobran = despachadas.keys() - reservadas.keys()
     if sobran:
         raise ValueError(
@@ -48,10 +52,11 @@ def validar_despacho(
     faltan = reservadas.keys() - despachadas.keys()
     if faltan:
         raise ValueError(
-            f"La linea {min(faltan)} tiene reserva activa pero no está en el despacho."
+            f"La linea {min(faltan)} tiene reserva activa pero no esta en el despacho."
         )
     for linea, cantidad in despachadas.items():
         if cantidad != reservadas[linea]:
             raise ValueError(
-                f"La linea {linea} tiene {cantidad} en el despacho pero {reservadas[linea]} en la reserva."
+                f"La linea {linea} tiene {cantidad} en el despacho "
+                f"pero {reservadas[linea]} en la reserva."
             )
