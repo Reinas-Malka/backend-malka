@@ -396,3 +396,88 @@ class TandaCreada(TandaRespuesta):
     consumo: MovimientoRespuesta
     stock: Decimal
     advertencias: list[Advertencia] = []
+
+
+# --- operaciones por lote sobre la tanda (#28) ---
+
+# Tope de una operacion: alcanza de sobra para 3 cuadros (405 celdas) y evita
+# pedidos absurdos.
+MAXIMO_CELDAS_POR_OPERACION = 10_000
+
+CantidadCeldas = Annotated[
+    int, Field(ge=1, le=MAXIMO_CELDAS_POR_OPERACION, strict=True)
+]
+
+
+class _OperacionConFecha(_Entrada):
+    # Dia calendario: el domingo no aplica (docs/dominio.md, 23/10).
+    fecha: date
+
+    @field_validator("fecha")
+    @classmethod
+    def no_futura(cls, fecha: date) -> date:
+        # hoy() con la hora de Argentina: el servidor esta en UTC.
+        if fecha > hoy():
+            raise ValueError("La fecha no puede ser futura.")
+        return fecha
+
+
+class OperacionDescartar(_OperacionConFecha):
+    """Descartar celdas que todavia no se introdujeron (quedan sin nucleo)."""
+
+    accion: Literal["descartar"]
+    cantidad: CantidadCeldas
+
+
+class OperacionIntroducir(_OperacionConFecha):
+    """Introducir en un parque: el sistema elige los nucleos, nunca el usuario."""
+
+    accion: Literal["introducir"]
+    cantidad: CantidadCeldas
+    parque_id: UUID
+
+
+class OperacionCosechar(_OperacionConFecha):
+    """Cosechar la tanda: una sola vez, en un dia.
+
+    cantidad son las reinas cosechadas; el resto de las celdas del parque
+    pasa solo a descartada. Puede ser 0 (se perdio todo).
+    """
+
+    accion: Literal["cosechar"]
+    cantidad: Annotated[int, Field(ge=0, le=MAXIMO_CELDAS_POR_OPERACION, strict=True)]
+
+
+class OperacionPasarABanco(_Entrada):
+    """Pasar reinas enjauladas que todavia no estan en un banco."""
+
+    accion: Literal["pasar_a_banco"]
+    cantidad: CantidadCeldas
+    banco_id: UUID
+
+
+# El campo accion elige el tipo: un cuerpo con accion desconocida es 422.
+OperacionCrear = Annotated[
+    OperacionDescartar | OperacionIntroducir | OperacionCosechar | OperacionPasarABanco,
+    Field(discriminator="accion"),
+]
+
+
+class RepartoNucleo(BaseModel):
+    """Cuantas celdas fueron a un nucleo en esta introduccion."""
+
+    nucleo_id: UUID
+    fila: int
+    posicion: int
+    celdas: int
+
+
+class OperacionRealizada(BaseModel):
+    accion: str
+    cantidad: int
+    # La tanda despues de la operacion, con sus celdas por estado.
+    tanda: TandaRespuesta
+    # Solo al introducir: el reparto, en orden de fila y posicion.
+    reparto: list[RepartoNucleo] | None = None
+    # Solo al cosechar: las celdas del parque que no se cosecharon.
+    descartadas_en_cosecha: int | None = None
