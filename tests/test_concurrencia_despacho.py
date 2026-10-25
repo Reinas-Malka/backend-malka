@@ -9,7 +9,9 @@ reserva (#35):
 - Dos despachos del mismo banco no se llevan las mismas celdas: el segundo
   espera y elige otras, y salen los dos.
 
-Reusa el criadero, los pedidos y el motor de test_concurrencia_reservas.py.
+Tambien prueba que el despacho saque exactamente lo pedido con cualquier
+plan de Postgres. Reusa el criadero, los pedidos y el motor de
+test_concurrencia_reservas.py.
 """
 
 import threading
@@ -221,3 +223,28 @@ def test_un_despacho_que_no_alcanza_deja_todo_como_estaba(
     assert resultado == "stock_insuficiente_en_banco"
     italiana = disponibilidad(motor, criadero.tenant, criadero.italiana)
     assert (italiana.enjauladas, italiana.reservadas) == (10, 5)
+
+
+def test_despacha_exactamente_lo_pedido_aunque_el_plan_reejecute_la_eleccion(
+    motor: Engine, motor_owner: Engine, criadero: Criadero, banco: uuid.UUID
+) -> None:
+    (pedido,) = pedidos(motor_owner, criadero, criadero.italiana, 6)
+    datos = _reservado(motor, criadero, pedido)
+
+    with Session(motor) as s, s.begin():
+        s.execute(db.FIJAR_TENANT, {"tenant_id": str(criadero.tenant)})
+        # Empuja al planificador a un Nested Loop que vuelve a ejecutar la
+        # eleccion de celdas por cada fila. Con estadisticas viejas lo elige
+        # solo: asi fallaba a veces la suite completa, despachando 8 de 6.
+        for opcion in (
+            "enable_hashjoin",
+            "enable_hashagg",
+            "enable_mergejoin",
+            "enable_material",
+            "enable_sort",
+        ):
+            s.execute(text(f"SET LOCAL {opcion} = off"))
+        repositorio_transiciones.cambiar_estado(s, pedido, datos)
+
+    italiana = disponibilidad(motor, criadero.tenant, criadero.italiana)
+    assert (italiana.enjauladas, italiana.reservadas) == (4, 0)

@@ -50,20 +50,25 @@ LEER_RESERVAS = text(
 
 LEER_BANCOS = text("SELECT id FROM banco WHERE id = ANY(:ids)")
 
-# Elige las celdas en la subconsulta y las actualiza en el UPDATE de afuera.
+# Elige las celdas en el CTE y las actualiza en el UPDATE.
+# - MATERIALIZED: el CTE se calcula una sola vez. Como subconsulta del WHERE,
+#   segun el plan Postgres puede volver a ejecutarla por cada fila; cada vuelta
+#   saltea las celdas que ya despacho, elige otras y el UPDATE se lleva mas
+#   de :cantidad.
 # - IS NOT DISTINCT FROM: con banco_id NULL compara "sin banco" (= no sirve).
 # - Las mas viejas primero; el id desempata para que sea determinista.
 # - FOR UPDATE OF c: bloquea las celdas elegidas, no las tandas.
 # - RETURNING: si vuelven menos filas que :cantidad, el banco no alcanzaba.
 DESPACHAR = text(
-    "UPDATE celda SET estado = 'despachada', pedido_item_id = :pedido_item_id, "
-    "fecha_despacho = :fecha, actualizado_en = now() "
-    "WHERE id IN ("
+    "WITH elegidas AS MATERIALIZED ("
     "SELECT c.id FROM celda c JOIN tanda t ON t.id = c.tanda_id "
     "WHERE c.estado = 'enjaulada' AND t.raza_id = :raza_id "
     "AND c.banco_id IS NOT DISTINCT FROM CAST(:banco_id AS uuid) "
     "ORDER BY c.fecha_enjaulado, c.id LIMIT :cantidad FOR UPDATE OF c"
-    ") RETURNING id"
+    ") "
+    "UPDATE celda SET estado = 'despachada', pedido_item_id = :pedido_item_id, "
+    "fecha_despacho = :fecha, actualizado_en = now() "
+    "FROM elegidas WHERE celda.id = elegidas.id RETURNING celda.id"
 )
 
 # Consumir (entregar) o liberar (cancelar): las dos cierran las activas.
