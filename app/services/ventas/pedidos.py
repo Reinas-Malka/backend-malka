@@ -14,7 +14,7 @@ from app.services.ventas.clientes import TipoCliente
 
 
 class EstadoPedido(StrEnum):
-    # La lista completa de #36: las transiciones las valida su servicio.
+    # Que transiciones valen lo decide app/services/ventas/transiciones.py (#36).
     BORRADOR = "borrador"
     RESERVADO = "reservado"
     ENTREGADO = "entregado"

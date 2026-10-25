@@ -544,7 +544,8 @@ def test_lista_filtra_por_estado(
     tenant, datos, _ = criaderos
     borrador = crear(api, tenant, nacional(datos))
     reservado = crear(api, tenant, nacional(datos))
-    # Hasta #36 no hay transiciones: se cambia el estado directo en la base.
+    # El estado se cambia directo en la base: reservar por la API (#35)
+    # pediria cargar reinas, y aca solo se prueba el filtro.
     with motor_owner.begin() as c:
         fijar_tenant(c, tenant)
         c.execute(

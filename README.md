@@ -125,6 +125,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` y `?cursor=` (ver más abajo). Todos los roles. |
 | GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
 | POST | `/api/v1/pedidos/{id}/reservas` | Reserva todas las líneas de un pedido en `borrador`, sin cuerpo, y lo pasa a `reservado`. Roles `admin` y `ventas`. 201 con las reservas; 409 `stock_insuficiente` con el disponible por raza, o `pedido_no_reservable` si no está en borrador (ver [Reservas](#reservas)). |
+| POST | `/api/v1/pedidos/{id}/estado` | Entrega un pedido `reservado`, eligiendo de qué bancos sale cada línea, o cancela uno en `borrador` o `reservado`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 200 con el pedido; 409 `transicion_invalida` o `stock_insuficiente_en_banco`; 422 `despacho_invalido` o `banco_no_encontrado` (ver [Despacho y cancelación](#despacho-y-cancelación)). |
 | GET | `/api/v1/disponibilidad` | Reinas por raza calculadas desde las celdas (ADR 0014): `enjauladas`, `reservadas` (las reservas activas), `disponible` y `bancos`, la existencia por banco, con `null` para las enjauladas que todavía no pasaron a un banco. Filtro opcional `?raza_id=`. Todos los roles. |
 | POST | `/api/v1/embarques` | Alta de embarque (`destino_pais` ISO ≠ AR, `fecha_vuelo`, `awb` opcional con dígito verificador IATA), siempre en `en_preparacion`. Roles `admin` y `ventas`. 409 `awb_duplicado`. |
 | GET | `/api/v1/embarques` | Embarques por fecha de vuelo, del más nuevo al más viejo, con `documentos_cargados`. Filtro opcional `?estado=`; paginado. Todos los roles. |
@@ -270,7 +271,7 @@ def crear_tanda(
 - **Exportación ⇔ cliente de tipo exportación.** Exige `destino_pais` (país donde recibe el cliente final, no el del hub) y moneda USD o EUR. El `incoterm` es opcional.
 - **Nacional:** moneda ARS, sin `destino_pais` ni `incoterm`.
 - El precio se manda como texto (`"35.50"`), con 2 decimales como máximo. La alícuota no se manda: se copia del ítem vendible al crear la línea, y un cambio posterior del catálogo no recalcula el pedido.
-- No se acepta `estado`: el alta crea siempre en `borrador`. Las transiciones son del #36.
+- No se acepta `estado`: el alta crea siempre en `borrador`. El estado cambia con `/reservas` y `/estado` (ver [Reservas](#reservas) y [Despacho y cancelación](#despacho-y-cancelación)).
 - Cada línea vuelve con su `numero_linea` (1, 2, 3…), en el orden en que se mandó.
 
 | Código (422) | Cuándo |
@@ -309,7 +310,53 @@ Son 422 y no 404 porque la ruta existe: lo que está mal es un dato del cuerpo.
 
 5. Si alcanzan todas, crea una reserva `activa` por línea y el pedido pasa a `reservado`.
 
-Las reservas van por raza, sin banco: los bancos se eligen al despachar (#36), que las pasa a `consumida`; cancelar el pedido las pasa a `liberada`. No vencen. `tests/test_concurrencia_reservas.py` prueba 20 pedidos de 10 reinas contra 100: se reservan exactamente 10.
+Las reservas van por raza, sin banco: los bancos se eligen al despachar, que las pasa a `consumida`; cancelar el pedido las pasa a `liberada` (ver [Despacho y cancelación](#despacho-y-cancelación)). No vencen. `tests/test_concurrencia_reservas.py` prueba 20 pedidos de 10 reinas contra 100: se reservan exactamente 10.
+
+### Despacho y cancelación
+
+`POST /api/v1/pedidos/{id}/estado` entrega o cancela un pedido (#36, ADR 0014). `borrador → reservado` no pasa por acá: lo hace `/reservas`. `entregado` y `cancelado` son finales: cualquier otra transición responde 409 `transicion_invalida`, con `details.desde` y `details.hacia`.
+
+Entregar dice, por cada línea, de qué bancos salen las reinas:
+
+```json
+{
+  "estado": "entregado",
+  "fecha": "2026-10-20",
+  "lineas": [
+    {"pedido_item_id": "…", "bancos": [
+      {"banco_id": "…", "cantidad": 6},
+      {"banco_id": "…", "cantidad": 4}
+    ]},
+    {"pedido_item_id": "…", "bancos": [{"banco_id": null, "cantidad": 5}]}
+  ]
+}
+```
+
+- `banco_id: null` son las enjauladas que todavía no pasaron a un banco. La clave es obligatoria: olvidarla es 422, no "sin banco".
+- `fecha` es opcional (por defecto, hoy en hora de Argentina) y no puede ser futura: el despacho registra algo que ya pasó.
+- No hay entrega parcial: cada línea sale con la cantidad que tiene reservada.
+
+Todo pasa en una sola transacción:
+
+1. Lee el pedido con `FOR UPDATE` y valida la transición.
+2. Compara el despacho con las reservas activas, línea por línea.
+3. Toma el mismo lock por `(tenant, raza)` que la reserva y en el mismo orden: una reserva de esa raza espera a que el despacho confirme.
+4. Por cada línea y banco, pasa a `despachada` las celdas enjauladas de la raza de la línea, las más viejas primero (`fecha_enjaulado`), y les guarda la línea (`pedido_item_id`) y la `fecha_despacho` (migración 0013).
+5. Pasa las reservas a `consumida` y el pedido a `entregado`. Las celdas y las reservas bajan juntas: el disponible no se descuenta dos veces.
+
+Cancelar no lleva más datos (`{"estado": "cancelado"}`): pasa las reservas activas a `liberada` y las reinas vuelven al disponible. No se mueve ninguna celda.
+
+Acepta `Idempotency-Key`: un reintento con la misma clave devuelve el pedido como quedó. Sin clave, el reintento encuentra el pedido ya entregado y responde 409, así que tampoco despacha dos veces.
+
+| Código | Cuándo |
+|---|---|
+| 409 `transicion_invalida` | El estado actual no permite el cambio (por ejemplo, entregar un borrador o cancelar un entregado) |
+| 409 `stock_insuficiente_en_banco` | Un banco no tiene tantas enjauladas de la raza de la línea. `details` trae `pedidas` y `hay`, y no queda nada despachado |
+| 422 `despacho_invalido` | Falta una línea, sobra una (de otro pedido o sin reserva activa) o la cantidad no es la reservada |
+| 422 `banco_no_encontrado` | El banco no existe o es de otro criadero (responden igual a propósito) |
+| 422 `validacion` | El cuerpo no cumple el formato: otro estado (incluido `reservado`), un banco o una línea repetidos, una fecha futura |
+
+`tests/test_api_transiciones.py` prueba la matriz completa y un despacho repartido entre dos bancos; `tests/test_concurrencia_despacho.py`, despachos y reservas simultáneos de la misma raza.
 
 ---
 

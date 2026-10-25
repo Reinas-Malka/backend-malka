@@ -42,8 +42,9 @@ class PedidoItemCrear(BaseModel):
 class PedidoCrear(BaseModel):
     """Cuerpo de POST /api/v1/pedidos.
 
-    Sin estado: el alta crea siempre en borrador y las transiciones son de
-    #36. Sin tenant_id: lo completa PostgreSQL (ADR 0009). extra="forbid"
+    Sin estado: el alta crea siempre en borrador y el estado cambia con
+    /reservas (#35) y /estado (#36). Sin tenant_id: lo completa PostgreSQL
+    (ADR 0009). extra="forbid"
     rechaza cualquiera de los dos si llegan.
     """
 
