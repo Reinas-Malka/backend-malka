@@ -1,4 +1,4 @@
-"""Endpoints de pedidos (#34) y de sus reservas (#35).
+"""Endpoints de pedidos (#34), de sus reservas (#35) y de su estado (#36).
 
 Leer puede cualquier rol del criadero; crear, solo admin y ventas. La
 validacion de formato vive en los schemas y la que necesita la base en el
@@ -19,7 +19,12 @@ from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_un
 from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
 from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.schemas.reservas import ReservaRespuesta
-from app.services.ventas import repositorio_pedidos, repositorio_reservas
+from app.schemas.transiciones import CambioDeEstado
+from app.services.ventas import (
+    repositorio_pedidos,
+    repositorio_reservas,
+    repositorio_transiciones,
+)
 from app.services.ventas.pedidos import EstadoPedido
 
 router = APIRouter(prefix="/api/v1/pedidos", tags=["pedidos"])
@@ -80,3 +85,26 @@ def reservar_pedido(
     pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
 ) -> list[ReservaRespuesta]:
     return repositorio_reservas.reservar(sesion, pedido_id)
+
+
+# Entregar (con los bancos de cada linea) o cancelar; reservado va por
+# /reservas. Con Idempotency-Key, un reintento devuelve el pedido como quedo;
+# sin ella, encuentra el pedido ya entregado o cancelado y responde 409
+# transicion_invalida, sin despachar dos veces.
+@router.post(
+    "/{pedido_id}/estado",
+    response_model=PedidoRespuesta,
+    dependencies=SOLO_ESCRITURA,
+)
+def cambiar_estado_pedido(
+    pedido_id: UUID,
+    datos: CambioDeEstado,
+    solicitud: PedidoIdempotente = Depends(pedido_idempotente),
+    sesion: Session = Depends(obtener_sesion),
+) -> JSONResponse:
+    return responder_una_vez(
+        sesion,
+        solicitud,
+        lambda: repositorio_transiciones.cambiar_estado(sesion, pedido_id, datos),
+        status_code=200,
+    )
