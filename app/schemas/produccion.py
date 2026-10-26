@@ -397,6 +397,7 @@ class TandaCreada(TandaRespuesta):
     stock: Decimal
     advertencias: list[Advertencia] = []
 
+
 class NucleoDeTanda(BaseModel):
     """Un nucleo con celdas de la tanda que siguen en el parque."""
 
@@ -428,6 +429,7 @@ class TandaDetalle(TandaRespuesta):
 
     nucleos: list[NucleoDeTanda]
     bancos: list[BancoDeTanda]
+
 
 # --- operaciones por lote sobre la tanda (#28) ---
 

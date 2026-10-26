@@ -245,6 +245,7 @@ def obtener(sesion: Session, tanda_id: UUID) -> TandaRespuesta:
         raise NoEncontradoError("No existe la tanda.", code="tanda_no_encontrada")
     return _a_respuesta(fila, _celdas_por_tanda(sesion, [tanda_id])[tanda_id])
 
+
 def detalle(sesion: Session, tanda_id: UUID) -> TandaDetalle:
     """La tanda con sus celdas por estado y donde estan: nucleos y bancos."""
     tanda = obtener(sesion, tanda_id)
@@ -260,6 +261,7 @@ def detalle(sesion: Session, tanda_id: UUID) -> TandaDetalle:
             for fila in sesion.execute(BANCOS_DE_LA_TANDA, parametros)
         ],
     )
+
 
 def listar(
     sesion: Session,
