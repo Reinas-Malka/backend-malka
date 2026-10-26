@@ -397,6 +397,37 @@ class TandaCreada(TandaRespuesta):
     stock: Decimal
     advertencias: list[Advertencia] = []
 
+class NucleoDeTanda(BaseModel):
+    """Un nucleo con celdas de la tanda que siguen en el parque."""
+
+    nucleo_id: UUID
+    parque_id: UUID
+    fila: int
+    posicion: int
+    # Celdas de esta tanda en el nucleo (introducida), contadas al leer.
+    celdas: int
+
+
+class BancoDeTanda(BaseModel):
+    """Un banco con reinas cosechadas de la tanda."""
+
+    banco_id: UUID
+    identificador: str
+    # Reinas de esta tanda en el banco (enjaulada), contadas al leer.
+    reinas: int
+
+
+class TandaDetalle(TandaRespuesta):
+    """GET de una tanda: ademas de las celdas por estado, donde estan.
+
+    Solo el detalle: el listado sigue con TandaRespuesta. Los nucleos son los
+    que tienen celdas de la tanda en el parque; despues de la cosecha quedan
+    libres y la lista viene vacia. Las cosechadas sin banco son
+    celdas_por_estado["enjaulada"] menos la suma de bancos.
+    """
+
+    nucleos: list[NucleoDeTanda]
+    bancos: list[BancoDeTanda]
 
 # --- operaciones por lote sobre la tanda (#28) ---
 
