@@ -14,7 +14,9 @@ Reglas de docs/dominio.md (confirmado 07/10 y 16/10):
   negativo: no se bloquea, la respuesta trae la advertencia stock_negativo.
 - fecha_traslarve en domingo es 422 fecha_no_laborable, salvo un registro
   retroactivo (carga tardia de una tanda ya hecha).
-- Las celdas de la tanda (total y por estado) se cuentan al leer.
+- Las celdas de la tanda (total y por estado) se cuentan al leer. El detalle
+  suma donde estan: los nucleos con celdas en el parque y los bancos con
+  reinas cosechadas, tambien contados al leer.
 
 Todo pasa en la transaccion de obtener_sesion: si algo falla, no queda ni la
 tanda, ni sus celdas, ni el consumo. Como en el resto de los repositorios,
@@ -38,9 +40,12 @@ from app.errores import NoEncontradoError, ValidacionError
 from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del_cursor
 from app.schemas.produccion import (
     Advertencia,
+    BancoDeTanda,
     MovimientoRespuesta,
+    NucleoDeTanda,
     TandaCreada,
     TandaCrear,
+    TandaDetalle,
     TandaRespuesta,
 )
 from app.services.produccion import repositorio_materiales
@@ -88,6 +93,28 @@ OBTENER = text(
 CONTAR_CELDAS = text(
     "SELECT tanda_id, estado, count(*) AS cantidad FROM celda "
     "WHERE tanda_id = ANY(:ids) GROUP BY tanda_id, estado"
+)
+
+# Nucleos con celdas de la tanda que siguen en el parque (introducida): al
+# cosecharse, las celdas salen y el nucleo queda libre. RLS filtra celda y
+# nucleo, asi que nunca aparece uno de otro criadero.
+NUCLEOS_DE_LA_TANDA = text(
+    "SELECT n.id AS nucleo_id, n.parque_id, n.fila, n.posicion, "
+    "count(*) AS celdas "
+    "FROM celda c JOIN nucleo n ON n.id = c.nucleo_id "
+    "WHERE c.tanda_id = :tanda AND c.estado = 'introducida' "
+    "GROUP BY n.id, n.parque_id, n.fila, n.posicion "
+    "ORDER BY n.parque_id, n.fila, n.posicion"
+)
+
+# Bancos con reinas cosechadas de la tanda: las enjauladas con banco, igual
+# que reinas_en_banco del banco (una despachada ya no esta en el banco).
+BANCOS_DE_LA_TANDA = text(
+    "SELECT b.id AS banco_id, b.identificador, count(*) AS reinas "
+    "FROM celda c JOIN banco b ON b.id = c.banco_id "
+    "WHERE c.tanda_id = :tanda AND c.estado = 'enjaulada' "
+    "GROUP BY b.id, b.identificador "
+    "ORDER BY b.identificador"
 )
 
 # Filtros opcionales: con el parametro en NULL, la condicion deja pasar todo
@@ -218,6 +245,21 @@ def obtener(sesion: Session, tanda_id: UUID) -> TandaRespuesta:
         raise NoEncontradoError("No existe la tanda.", code="tanda_no_encontrada")
     return _a_respuesta(fila, _celdas_por_tanda(sesion, [tanda_id])[tanda_id])
 
+def detalle(sesion: Session, tanda_id: UUID) -> TandaDetalle:
+    """La tanda con sus celdas por estado y donde estan: nucleos y bancos."""
+    tanda = obtener(sesion, tanda_id)
+    parametros = {"tanda": tanda_id}
+    return TandaDetalle(
+        **tanda.model_dump(),
+        nucleos=[
+            NucleoDeTanda.model_validate(dict(fila._mapping))
+            for fila in sesion.execute(NUCLEOS_DE_LA_TANDA, parametros)
+        ],
+        bancos=[
+            BancoDeTanda.model_validate(dict(fila._mapping))
+            for fila in sesion.execute(BANCOS_DE_LA_TANDA, parametros)
+        ],
+    )
 
 def listar(
     sesion: Session,
