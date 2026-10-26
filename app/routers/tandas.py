@@ -24,6 +24,7 @@ from app.schemas.produccion import (
     OperacionRealizada,
     TandaCreada,
     TandaCrear,
+    TandaDetalle,
     TandaRespuesta,
 )
 from app.services.produccion import repositorio_operaciones, repositorio_tandas
@@ -64,11 +65,12 @@ def listar_tandas(
     )
 
 
-@router.get("/{tanda_id}", response_model=TandaRespuesta)
+@router.get("/{tanda_id}", response_model=TandaDetalle)
 def obtener_tanda(
     tanda_id: UUID, sesion: Session = Depends(obtener_sesion)
-) -> TandaRespuesta:
-    return repositorio_tandas.obtener(sesion, tanda_id)
+) -> TandaDetalle:
+    """La tanda con sus celdas por estado, sus nucleos ocupados y sus bancos."""
+    return repositorio_tandas.detalle(sesion, tanda_id)
 
 
 @router.post(
