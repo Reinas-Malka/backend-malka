@@ -210,8 +210,8 @@ def test_lista_solo_los_clientes_del_criadero(
     crear(api, a, NACIONAL)
     crear(api, b, EXPORTACION)
 
-    de_a = api.get(URL, headers=como(a)).json()
-    de_b = api.get(URL, headers=como(b)).json()
+    de_a = api.get(URL, headers=como(a)).json()["items"]
+    de_b = api.get(URL, headers=como(b)).json()["items"]
 
     assert [c["nombre"] for c in de_a] == [NACIONAL["nombre"]]
     assert [c["nombre"] for c in de_b] == [EXPORTACION["nombre"]]
@@ -260,9 +260,51 @@ def test_lista_ordenada_por_nombre(
     crear(api, a, EXPORTACION)
     crear(api, a, NACIONAL)
 
-    nombres = [c["nombre"] for c in api.get(URL, headers=como(a)).json()]
+    nombres = [c["nombre"] for c in api.get(URL, headers=como(a)).json()["items"]]
 
     assert nombres == sorted(nombres)
+
+
+def test_paginacion_recorre_todo_sin_repetir(
+    api: TestClient, criaderos: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    a, _ = criaderos
+    creados = {
+        crear(
+            api,
+            a,
+            {**EXPORTACION, "nombre": f"Cliente {n}", "cuit_o_tax_id": f"DE{n}"},
+        )["id"]
+        for n in (1, 2, 3, 4, 5)
+    }
+
+    vistos: list[str] = []
+    params: dict[str, Any] = {"limite": 2}
+    paginas = 0
+    while True:
+        respuesta = api.get(URL, params=params, headers=como(a))
+        assert respuesta.status_code == 200, respuesta.json()
+        pagina = respuesta.json()
+        assert len(pagina["items"]) <= 2
+        vistos += [c["id"] for c in pagina["items"]]
+        paginas += 1
+        if pagina["siguiente"] is None:
+            break
+        params["cursor"] = pagina["siguiente"]
+
+    assert paginas == 3
+    assert set(vistos) == creados
+    assert len(vistos) == len(creados)
+
+
+def test_cursor_invalido_es_422(
+    api: TestClient, criaderos: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    a, _ = criaderos
+    respuesta = api.get(URL, params={"cursor": "basura"}, headers=como(a))
+
+    assert respuesta.status_code == 422
+    assert codigo(respuesta) == "cursor_invalido"
 
 
 # --- edicion ---
@@ -333,8 +375,10 @@ def test_baja_logica_y_reactivacion(
     ruta = f"{URL}/{crear(api, a, NACIONAL)['id']}"
 
     baja = api.delete(ruta, headers=como(a))
-    activos = api.get(URL, headers=como(a)).json()
-    todos = api.get(URL, params={"incluir_inactivos": True}, headers=como(a)).json()
+    activos = api.get(URL, headers=como(a)).json()["items"]
+    todos = api.get(URL, params={"incluir_inactivos": True}, headers=como(a)).json()[
+        "items"
+    ]
     desactivado = api.get(ruta, headers=como(a)).json()
 
     assert baja.status_code == 204
@@ -345,7 +389,7 @@ def test_baja_logica_y_reactivacion(
     reactivado = api.patch(ruta, json={"activo": True}, headers=como(a))
 
     assert reactivado.json()["activo"] is True
-    assert len(api.get(URL, headers=como(a)).json()) == 1
+    assert len(api.get(URL, headers=como(a)).json()["items"]) == 1
 
 
 def test_un_cliente_desactivado_sigue_ocupando_su_cuit(

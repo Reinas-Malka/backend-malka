@@ -189,7 +189,7 @@ def test_un_header_no_cambia_el_criadero(
     a, b = criaderos
     headers = {**como(a), header: str(b)}
 
-    assert api.get(URL, headers=headers).json() == []
+    assert api.get(URL, headers=headers).json()["items"] == []
 
 
 @pytest.mark.parametrize(

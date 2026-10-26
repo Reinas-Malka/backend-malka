@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_role
 from app.db import obtener_sesion
 from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
+from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
 from app.schemas.clientes import ClienteActualizar, ClienteCrear, ClienteRespuesta
 from app.services.ventas import repositorio_clientes
 
@@ -40,11 +41,15 @@ def crear_cliente(
     )
 
 
-@router.get("", response_model=list[ClienteRespuesta])
+@router.get("", response_model=Pagina[ClienteRespuesta])
 def listar_clientes(
-    incluir_inactivos: bool = False, sesion: Session = Depends(obtener_sesion)
-) -> list[ClienteRespuesta]:
-    return repositorio_clientes.listar(sesion, incluir_inactivos=incluir_inactivos)
+    incluir_inactivos: bool = False,
+    pagina: ParametrosDePagina = Depends(parametros_de_pagina),
+    sesion: Session = Depends(obtener_sesion),
+) -> Pagina[ClienteRespuesta]:
+    return repositorio_clientes.listar(
+        sesion, pagina, incluir_inactivos=incluir_inactivos
+    )
 
 
 @router.get("/{cliente_id}", response_model=ClienteRespuesta)

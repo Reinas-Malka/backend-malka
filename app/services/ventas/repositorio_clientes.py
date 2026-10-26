@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errores import ConflictoError, NoEncontradoError
+from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del_cursor
 from app.schemas.clientes import ClienteActualizar, ClienteCrear, ClienteRespuesta
 
 # Nombre de la restriccion en la migracion 0005.
@@ -33,7 +34,9 @@ INSERTAR = text(
 
 LISTAR = text(
     "SELECT id, nombre, pais, tipo, condicion_iva, cuit_o_tax_id, activo "
-    "FROM cliente WHERE activo OR :incluir_inactivos ORDER BY nombre, id"
+    "FROM cliente WHERE (activo OR :incluir_inactivos) "
+    "AND (:sin_cursor OR (nombre, id) > (:c_nombre, CAST(:c_id AS uuid))) "
+    "ORDER BY nombre, id LIMIT :limite"
 )
 
 OBTENER = text(
@@ -96,10 +99,24 @@ def crear(sesion: Session, datos: ClienteCrear) -> ClienteRespuesta:
 
 
 def listar(
-    sesion: Session, *, incluir_inactivos: bool = False
-) -> list[ClienteRespuesta]:
-    filas = sesion.execute(LISTAR, {"incluir_inactivos": incluir_inactivos})
-    return [_a_respuesta(fila) for fila in filas]
+    sesion: Session, pagina: ParametrosDePagina, *, incluir_inactivos: bool = False
+) -> Pagina[ClienteRespuesta]:
+    c_nombre, c_id = valores_del_cursor(pagina, (str, UUID))
+    filas = sesion.execute(
+        LISTAR,
+        {
+            "incluir_inactivos": incluir_inactivos,
+            "sin_cursor": pagina.cursor is None,
+            "c_nombre": c_nombre,
+            "c_id": c_id,
+            "limite": pagina.limite + 1,
+        },
+    )
+    return armar_pagina(
+        [_a_respuesta(fila) for fila in filas],
+        pagina.limite,
+        lambda cliente: (cliente.nombre, cliente.id),
+    )
 
 
 def obtener(sesion: Session, cliente_id: UUID) -> ClienteRespuesta:
