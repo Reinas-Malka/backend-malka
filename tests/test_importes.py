@@ -14,6 +14,7 @@ from app.services.documentos.importes import (
     Linea,
     SubtotalAlicuota,
     calcular_importes,
+    calcular_totales_pedido,
     redondear,
 )
 
@@ -235,3 +236,63 @@ def test_como_dict_sobrevive_a_json_sin_floats() -> None:
     assert '"total": "4481.45"' in texto  # entre comillas: texto, no numero
     assert Decimal(leido["total"]) == r.total
     assert Alicuota(Decimal(leido["por_alicuota"][0]["alicuota"])) is Alicuota.IVA_21
+
+
+# --- totales del pedido (#113): en su moneda, sin tipo de cambio ---
+
+
+def test_el_pedido_en_euros_se_calcula_sin_tipo_de_cambio() -> None:
+    # Exportacion: 2 x 150.00 = 300.00 al 0%, aunque la linea traiga el 21%.
+    r = calcular_totales_pedido(
+        [Linea(2, Decimal("150.00"), Alicuota.IVA_21)], moneda="EUR", exportacion=True
+    )
+
+    assert r.lineas_neto == (Decimal("300.00"),)
+    assert (r.neto, r.iva, r.total) == (
+        Decimal("300.00"),
+        Decimal("0.00"),
+        Decimal("300.00"),
+    )
+    assert r.moneda == "EUR"
+
+
+def test_el_pedido_en_pesos_calcula_el_iva_por_alicuota() -> None:
+    # 3 x 1234.56 = 3703.68 | IVA 777.7728 -> 777.77 | 2 x 0.50 = 1.00 al 10.5%
+    # -> IVA 0.105 -> 0.11. Mismas reglas que el documento.
+    r = calcular_totales_pedido(
+        [
+            Linea(3, Decimal("1234.56"), Alicuota.IVA_21),
+            Linea(2, Decimal("0.50"), Alicuota.IVA_10_5),
+        ],
+        moneda="ARS",
+        exportacion=False,
+    )
+
+    assert (r.neto, r.iva, r.total) == (
+        Decimal("3704.68"),
+        Decimal("777.88"),
+        Decimal("4482.56"),
+    )
+    assert [s.alicuota for s in r.por_alicuota] == [Alicuota.IVA_10_5, Alicuota.IVA_21]
+
+
+def test_el_pedido_no_tiene_total_en_pesos_ni_tipo_de_cambio() -> None:
+    # El tipo de cambio lo fija ARCA al facturar: el pedido no lo conoce.
+    r = calcular_totales_pedido(
+        [Linea(1, Decimal("10"), Alicuota.IVA_0)], moneda="USD", exportacion=True
+    )
+
+    assert not hasattr(r, "tipo_cambio")
+    assert not hasattr(r, "total_en_pesos")
+
+
+def test_un_pedido_sin_lineas_es_invalido() -> None:
+    with pytest.raises(ImporteInvalido):
+        calcular_totales_pedido([], moneda="ARS", exportacion=False)
+
+
+def test_el_comprobante_en_usd_sin_tipo_de_cambio_sigue_rechazandose() -> None:
+    with pytest.raises(ImporteInvalido, match="tipo de cambio"):
+        calcular_importes(
+            [Linea(1, Decimal("10"), Alicuota.IVA_0)], exportacion=True, moneda="USD"
+        )

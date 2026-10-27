@@ -78,6 +78,8 @@ class PedidoItemRespuesta(BaseModel):
     cantidad: int
     precio_unitario: Decimal
     alicuota: Alicuota
+    # Cantidad por precio, redondeado a centavos. Se calcula, no se guarda.
+    neto: Decimal
 
 
 class PedidoRespuesta(BaseModel):
@@ -91,3 +93,8 @@ class PedidoRespuesta(BaseModel):
     incoterm: Incoterm | None
     fecha_entrega_solicitada: date
     items: list[PedidoItemRespuesta]
+    # En la moneda del pedido y sin tipo de cambio: lo fija ARCA al facturar.
+    # Se calculan con importes.py en cada lectura, nunca se guardan (#113).
+    neto: Decimal
+    iva: Decimal
+    total: Decimal

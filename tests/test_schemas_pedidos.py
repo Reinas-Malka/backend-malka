@@ -143,8 +143,13 @@ def test_respuesta_lee_la_alicuota_como_la_devuelve_la_base() -> None:
                     "id": uuid.uuid4(),
                     "numero_linea": 1,
                     "alicuota": Decimal("0.210"),
+                    "neto": Decimal("100.00"),
                 },
             ],
+            # Los totales los calcula el repositorio (#113); aca solo se lee.
+            "neto": Decimal("100.00"),
+            "iva": Decimal("21.00"),
+            "total": Decimal("121.00"),
         }
     )
 

@@ -20,6 +20,9 @@ Reglas de calculo:
 - Todo importe devuelto tiene exactamente dos decimales.
 - En exportacion no se cobra IVA: todas las lineas se calculan al 0%,
   sin importar la alicuota que traigan.
+- El pedido se calcula en su moneda y sin tipo de cambio (#113): lo fija ARCA
+  al facturar, despues del pedido (ADR 0008, enmienda del 16/10). El tipo de
+  cambio solo se exige en calcular_importes, que es el del documento.
 """
 
 from __future__ import annotations
@@ -134,6 +137,26 @@ class Importes:
         }
 
 
+@dataclass(frozen=True)
+class TotalesPedido:
+    """Neto, IVA y total de un pedido, en su moneda. Se calculan, no se guardan."""
+
+    lineas_neto: tuple[Decimal, ...]
+    por_alicuota: tuple[SubtotalAlicuota, ...]
+    neto: Decimal
+    iva: Decimal
+    total: Decimal
+    moneda: str
+
+
+@dataclass(frozen=True)
+class _CuadroDeIva:
+    lineas_neto: tuple[Decimal, ...]
+    por_alicuota: tuple[SubtotalAlicuota, ...]
+    neto: Decimal
+    iva: Decimal
+
+
 def redondear(valor: Decimal) -> Decimal:
     """Redondea un valor a dos decimales con ROUND_HALF_UP."""
     return valor.quantize(CENTAVOS, rounding=REDONDEO)
@@ -153,11 +176,48 @@ def calcular_importes(
     En exportacion todas las lineas van al 0%. Si la moneda no es la local,
     el tipo de cambio es obligatorio.
     """
-
-    if not lineas:
-        raise ImporteInvalido("El documento tiene que tener al menos una linea.")
-
+    cuadro = _cuadro_de_iva(lineas, exportacion=exportacion, que="El documento")
     _validar_tipo_de_cambio(moneda, tipo_cambio)
+    total = cuadro.neto + cuadro.iva
+    total_en_pesos = total if tipo_cambio is None else redondear(total * tipo_cambio)
+    return Importes(
+        lineas_neto=cuadro.lineas_neto,
+        por_alicuota=cuadro.por_alicuota,
+        neto=cuadro.neto,
+        iva=cuadro.iva,
+        total=total,
+        moneda=moneda,
+        tipo_cambio=tipo_cambio,
+        exportacion=exportacion,
+        total_en_pesos=total_en_pesos,
+    )
+
+
+def calcular_totales_pedido(
+    lineas: Sequence[Linea], *, moneda: str, exportacion: bool
+) -> TotalesPedido:
+    """Neto, IVA y total del pedido en su moneda, sin tipo de cambio.
+
+    Mismas reglas de redondeo y de IVA que calcular_importes. No hay total en
+    pesos: la cotizacion recien existe al facturar.
+    """
+    cuadro = _cuadro_de_iva(lineas, exportacion=exportacion, que="El pedido")
+    return TotalesPedido(
+        lineas_neto=cuadro.lineas_neto,
+        por_alicuota=cuadro.por_alicuota,
+        neto=cuadro.neto,
+        iva=cuadro.iva,
+        total=cuadro.neto + cuadro.iva,
+        moneda=moneda,
+    )
+
+
+def _cuadro_de_iva(
+    lineas: Sequence[Linea], *, exportacion: bool, que: str
+) -> _CuadroDeIva:
+    """El neto de cada linea y el IVA por alicuota (ver el docstring del modulo)."""
+    if not lineas:
+        raise ImporteInvalido(f"{que} tiene que tener al menos una linea.")
 
     lineas_neto: list[Decimal] = []
     neto_por_alicuota: dict[Alicuota, Decimal] = {}
@@ -183,18 +243,11 @@ def calcular_importes(
 
     neto = redondear(sum((s.neto for s in por_alicuota), Decimal("0")))
     iva = redondear(sum((s.iva for s in por_alicuota), Decimal("0")))
-    total = neto + iva
-    total_en_pesos = total if tipo_cambio is None else redondear(total * tipo_cambio)
-    return Importes(
+    return _CuadroDeIva(
         lineas_neto=tuple(lineas_neto),
         por_alicuota=por_alicuota,
         neto=neto,
         iva=iva,
-        total=total,
-        moneda=moneda,
-        tipo_cambio=tipo_cambio,
-        exportacion=exportacion,
-        total_en_pesos=total_en_pesos,
     )
 
 
