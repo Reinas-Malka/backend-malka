@@ -79,6 +79,8 @@ OBTENER_PEDIDO = text(
     "FROM pedido WHERE id = :id"
 )
 
+EXISTE_PEDIDO = text("SELECT 1 FROM pedido WHERE id = :id")
+
 # Las lineas de varios pedidos en una sola consulta (no una por pedido).
 LEER_LINEAS = text(
     "SELECT pedido_id, id, numero_linea, item_vendible_id, raza_id, cantidad, "
@@ -190,6 +192,17 @@ def obtener(sesion: Session, pedido_id: UUID) -> PedidoRespuesta:
         raise NoEncontradoError("No existe el pedido.", code="pedido_no_encontrado")
     lineas = _lineas_por_pedido(sesion, [pedido_id])
     return _a_respuesta(pedido, lineas.get(pedido_id, []))
+
+
+def exigir_existente(sesion: Session, pedido_id: UUID) -> None:
+    """404 si el pedido no existe o es de otro criadero.
+
+    Para los GET de lo que cuelga del pedido (reservas, despachos): sin esto,
+    un pedido inexistente responderia una lista vacia, igual que uno sin nada.
+    Sin FOR UPDATE: solo lee.
+    """
+    if sesion.execute(EXISTE_PEDIDO, {"id": pedido_id}).first() is None:
+        raise NoEncontradoError("No existe el pedido.", code="pedido_no_encontrado")
 
 
 def listar(

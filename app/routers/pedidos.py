@@ -1,5 +1,8 @@
 """Endpoints de pedidos (#34), de sus reservas (#35) y de su estado (#36).
 
+Los GET de /reservas y /despachos muestran que se reservo y que salio de
+cada banco para el pedido (trazabilidad, frontend #12).
+
 Leer puede cualquier rol del criadero; crear, solo admin y ventas. La
 validacion de formato vive en los schemas y la que necesita la base en el
 repositorio: los endpoints solo conectan el request con el repositorio.
@@ -19,7 +22,7 @@ from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_un
 from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
 from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.schemas.reservas import ReservaRespuesta
-from app.schemas.transiciones import CambioDeEstado
+from app.schemas.transiciones import CambioDeEstado, DespachoDeLinea
 from app.services.ventas import (
     repositorio_pedidos,
     repositorio_reservas,
@@ -85,6 +88,25 @@ def reservar_pedido(
     pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
 ) -> list[ReservaRespuesta]:
     return repositorio_reservas.reservar(sesion, pedido_id)
+
+
+# Las reservas en cualquier estado: activa, consumida (entregado) o liberada
+# (cancelado). Lista sin paginar, como /disponibilidad: una por linea como
+# mucho, y un pedido tiene hasta MAX_ITEMS lineas.
+@router.get("/{pedido_id}/reservas", response_model=list[ReservaRespuesta])
+def listar_reservas_pedido(
+    pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
+) -> list[ReservaRespuesta]:
+    return repositorio_reservas.listar(sesion, pedido_id)
+
+
+# Por linea, cuantas reinas salieron de cada banco y que dia. Vacia hasta
+# que se entrega. Sin paginar: un pedido se entrega una sola vez.
+@router.get("/{pedido_id}/despachos", response_model=list[DespachoDeLinea])
+def listar_despachos_pedido(
+    pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
+) -> list[DespachoDeLinea]:
+    return repositorio_transiciones.listar_despachos(sesion, pedido_id)
 
 
 # Entregar (con los bancos de cada linea) o cancelar; reservado va por
