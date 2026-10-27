@@ -237,6 +237,9 @@ def test_get_devuelve_la_tanda_con_sus_celdas(
         "posicion_continuadora": None,
         "celdas": 3 * CUPULAS_POR_CUADRO,
         "celdas_por_estado": {"trasladada": 3 * CUPULAS_POR_CUADRO},
+        # El detalle suma donde estan (front #9): recien creada, en ningun lado.
+        "nucleos": [],
+        "bancos": [],
     }
 
 
