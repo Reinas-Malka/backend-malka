@@ -16,7 +16,7 @@ from uuid import UUID
 
 class EstadoReserva(StrEnum):
     # Activa hasta que el pedido se despacha (consumida) o se cancela
-    # (liberada). Las dos transiciones son de #36.
+    # (liberada). Las dos las hace repositorio_transiciones (#36).
     ACTIVA = "activa"
     CONSUMIDA = "consumida"
     LIBERADA = "liberada"
