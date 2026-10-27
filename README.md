@@ -117,7 +117,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | GET | `/health` | Liveness. Devuelve estado, versión, entorno y timestamp. |
 | GET | `/health/ready` | Readiness: lee el secreto, se conecta a RDS y ejecuta `SELECT 1`. 200 si todo responde, 503 si alguna dependencia falla. |
 | POST | `/api/v1/clientes` | Alta de cliente nacional o de exportación. Roles `admin` y `ventas`. 201, o 409 si el CUIT/tax id ya existe en el criadero. |
-| GET | `/api/v1/clientes` | Clientes activos del criadero, por nombre. `?incluir_inactivos=true` suma los dados de baja. Todos los roles. |
+| GET | `/api/v1/clientes` | Clientes activos del criadero, por nombre, paginados. `?incluir_inactivos=true` suma los dados de baja. Todos los roles. |
 | GET | `/api/v1/clientes/{id}` | Un cliente. 404 si no existe o es de otro criadero. Todos los roles. |
 | PATCH | `/api/v1/clientes/{id}` | Edición parcial; se valida el resultado completo. `{"activo": true}` reactiva. Roles `admin` y `ventas`. |
 | DELETE | `/api/v1/clientes/{id}` | Baja lógica (`activo = false`): el cliente sigue existiendo para sus pedidos y facturas. 204. Roles `admin` y `ventas`. |
@@ -153,7 +153,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 
 En los datos de producción leen todos los roles y escriben `admin` y `produccion`. Todos los POST aceptan `Idempotency-Key`.
 
-Los listados de producción y de pedidos devuelven `{"items": [...], "siguiente": "<cursor>"}`. Para la página siguiente se manda `?cursor=<siguiente>`; cuando `siguiente` es `null`, no hay más. `?limite=` va de 1 a 100 (50 por defecto). Un cursor roto responde 422 `cursor_invalido`. La lógica vive en `app/paginacion.py`.
+Los listados de producción, de clientes y de pedidos devuelven `{"items": [...], "siguiente": "<cursor>"}`. Para la página siguiente se manda `?cursor=<siguiente>`; cuando `siguiente` es `null`, no hay más. `?limite=` va de 1 a 100 (50 por defecto). Un cursor roto responde 422 `cursor_invalido`. La lógica vive en `app/paginacion.py`.
 
 Una operación que se hizo pero merece un aviso responde con su código de éxito y una lista `advertencias` de `{code, message, details}`; el frontend la muestra y sigue.
 
