@@ -84,7 +84,7 @@ Decisiones de diseño y sus alternativas descartadas: ver [`docs/adr/`](docs/adr
 | S3 | `malka-suite-dev-documentos-…` | Documentos e ingesta por URLs prefirmadas (versionado, SSE) |
 | RDS PostgreSQL 16 | `malka-suite-dev-db` (db.t4g.micro) | Base de datos, privada y solo TLS |
 | Secrets Manager | `malka-suite-dev/db/owner` | Credenciales de la base |
-| IAM + OIDC | proveedor OIDC de GitHub + rol `malka-suite-dev-github-actions` | Deploy por OIDC, sin claves (ADR 0005) |
+| IAM + OIDC | proveedor OIDC de GitHub + un rol por repo: `malka-suite-dev-github-actions` (backend) y `malka-suite-dev-github-actions-frontend` | Deploy por OIDC, sin claves (ADR 0005) |
 | CloudWatch | 3 grupos de logs (14 días), 2 alarmas de DLQ, X-Ray | Observabilidad |
 | S3 | `malka-suite-tfstate-961868442562` | Estado remoto de Terraform |
 
@@ -652,7 +652,8 @@ Se consultan desde `infra/` con `terraform output <nombre>`:
 | `ecr_repository_url` | Repositorio donde se suben las imágenes |
 | `lambda_api_nombre` | Nombre de la función, para buscar sus logs |
 | `db_secret_nombre` | Nombre del secreto con las credenciales de la base |
-| `github_actions_role_arn` | Rol que asume el deploy; va en el secret `AWS_ROLE_ARN` |
+| `github_actions_role_arn` | Rol que asume el deploy del backend; va en el secret `AWS_ROLE_ARN` |
+| `github_actions_frontend_role_arn` | Rol del deploy del frontend (solo su bucket y la invalidación de su distribución); va en `deploy.yml` de frontend-malka |
 
 ---
 

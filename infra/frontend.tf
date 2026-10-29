@@ -81,6 +81,89 @@ resource "aws_s3_bucket_policy" "frontend" {
   policy = data.aws_iam_policy_document.frontend_solo_cloudfront.json
 }
 
+###############################################################################
+# Cabeceras de seguridad de la SPA
+#
+# El ID token vive en sessionStorage (legible por JS): la CSP limita de donde
+# puede venir el codigo y a donde puede hablar la pagina, asi un script
+# inyectado no carga nada de afuera ni manda el token a otro dominio. Solo
+# se habla con la API, Cognito (token y JWKS) y el bucket de documentos (la
+# subida prefirmada va directo del navegador a S3, #102).
+#
+# 'unsafe-inline' solo en estilos: Radix y la tabla ponen estilos en linea.
+# Los scripts nunca: el build de Vite no tiene scripts en linea.
+###############################################################################
+
+locals {
+  # La API va con comodin: su CORS ya depende del dominio de esta
+  # distribucion (api.tf) y nombrarla aca armaria un ciclo. Sigue acotado
+  # a API Gateway de la region.
+  frontend_conexiones = join(" ", [
+    "'self'",
+    "https://*.execute-api.${var.region}.amazonaws.com",
+    "https://${aws_cognito_user_pool_domain.principal.domain}.auth.${var.region}.amazoncognito.com",
+    "https://cognito-idp.${var.region}.amazonaws.com",
+    "https://${aws_s3_bucket.documentos.bucket_domain_name}",
+    "https://${aws_s3_bucket.documentos.bucket_regional_domain_name}",
+  ])
+
+  frontend_csp = join("; ", [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src ${local.frontend_conexiones}",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ])
+}
+
+resource "aws_cloudfront_response_headers_policy" "frontend" {
+  name    = "${local.name}-frontend-seguridad"
+  comment = "CSP, HSTS y anti-iframe de la SPA"
+
+  security_headers_config {
+    content_security_policy {
+      content_security_policy = local.frontend_csp
+      override                = true
+    }
+
+    # Un año; sin preload: el dominio es el default de CloudFront.
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      override                   = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    # Ademas de frame-ancestors, para navegadores viejos: nadie mete la app
+    # en un iframe para robar clics.
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      value    = "camera=(), microphone=(), geolocation=(), payment=()"
+      override = true
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   enabled         = true
   comment         = "SPA de Malka Suite (ADR 0011)"
@@ -99,6 +182,8 @@ resource "aws_cloudfront_distribution" "frontend" {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     cache_policy_id        = "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized
+
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.frontend.id
   }
 
   # SPA: las rutas las resuelve el router del navegador; sin esto, recargar
