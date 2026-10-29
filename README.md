@@ -126,6 +126,8 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
 | POST | `/api/v1/pedidos/{id}/reservas` | Reserva todas las líneas de un pedido en `borrador`, sin cuerpo, y lo pasa a `reservado`. Roles `admin` y `ventas`. 201 con las reservas; 409 `stock_insuficiente` con el disponible por raza, o `pedido_no_reservable` si no está en borrador (ver [Reservas](#reservas)). |
 | POST | `/api/v1/pedidos/{id}/estado` | Entrega un pedido `reservado`, eligiendo de qué bancos sale cada línea, o cancela uno en `borrador` o `reservado`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 200 con el pedido; 409 `transicion_invalida` o `stock_insuficiente_en_banco`; 422 `despacho_invalido` o `banco_no_encontrado` (ver [Despacho y cancelación](#despacho-y-cancelación)). |
+| GET | `/api/v1/pedidos/{id}/reservas` | Las reservas del pedido en cualquier estado (`activa`, `consumida` al entregar, `liberada` al cancelar), una por línea como mucho y en el orden de las líneas. Lista vacía si nunca se reservó. 404 `pedido_no_encontrado` si no existe o es de otro criadero. Todos los roles. |
+| GET | `/api/v1/pedidos/{id}/despachos` | Lo que salió para el pedido, contado desde las celdas despachadas: por línea, `banco_id` (`null` = sin banco), `identificador`, `fecha_despacho` y `cantidad`. Lista vacía hasta que se entrega. 404 `pedido_no_encontrado` si no existe o es de otro criadero. Todos los roles. |
 | GET | `/api/v1/disponibilidad` | Reinas por raza calculadas desde las celdas (ADR 0014): `enjauladas`, `reservadas` (las reservas activas), `disponible` y `bancos`, la existencia por banco, con `null` para las enjauladas que todavía no pasaron a un banco. Filtro opcional `?raza_id=`. Todos los roles. |
 | POST | `/api/v1/embarques` | Alta de embarque (`destino_pais` ISO ≠ AR, `fecha_vuelo`, `awb` opcional con dígito verificador IATA), siempre en `en_preparacion`. Roles `admin` y `ventas`. 409 `awb_duplicado`. |
 | GET | `/api/v1/embarques` | Embarques por fecha de vuelo, del más nuevo al más viejo, con `documentos_cargados`. Filtro opcional `?estado=`; paginado. Todos los roles. |
@@ -348,6 +350,8 @@ Todo pasa en una sola transacción:
 Cancelar no lleva más datos (`{"estado": "cancelado"}`): pasa las reservas activas a `liberada` y las reinas vuelven al disponible. No se mueve ninguna celda.
 
 Acepta `Idempotency-Key`: un reintento con la misma clave devuelve el pedido como quedó. Sin clave, el reintento encuentra el pedido ya entregado y responde 409, así que tampoco despacha dos veces.
+
+`GET /api/v1/pedidos/{id}/despachos` muestra después lo que salió, con la misma forma que el cuerpo de entregar más el `identificador` del banco y la fecha. Las celdas despachadas antes de la migración 0013 no guardan la línea y no aparecen. `GET /api/v1/pedidos/{id}/reservas` muestra las reservas y en qué quedaron: con las dos, un pedido cancelado dice si llegó a reservarse.
 
 | Código | Cuándo |
 |---|---|

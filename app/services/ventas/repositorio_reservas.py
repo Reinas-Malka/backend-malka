@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.errores import ConflictoError, NoEncontradoError
 from app.schemas.reservas import ReservaRespuesta
-from app.services.ventas import repositorio_disponibilidad
+from app.services.ventas import repositorio_disponibilidad, repositorio_pedidos
 from app.services.ventas.pedidos import EstadoPedido
 from app.services.ventas.reservas import faltantes
 
@@ -56,6 +56,14 @@ INSERTAR_RESERVA = text(
 
 PASAR_A_RESERVADO = text(
     "UPDATE pedido SET estado = :estado, actualizado_en = now() WHERE id = :id"
+)
+
+# Las reservas del pedido en cualquier estado, en el orden de sus lineas.
+LISTAR_RESERVAS = text(
+    "SELECT r.id, r.pedido_item_id, r.raza_id, r.cantidad, r.estado "
+    "FROM reserva r JOIN pedido_item pi ON pi.id = r.pedido_item_id "
+    "WHERE pi.pedido_id = :pedido_id "
+    "ORDER BY pi.numero_linea, r.creado_en, r.id"
 )
 
 
@@ -122,3 +130,14 @@ def reservar(sesion: Session, pedido_id: UUID) -> list[ReservaRespuesta]:
         PASAR_A_RESERVADO, {"id": pedido_id, "estado": EstadoPedido.RESERVADO.value}
     )
     return [ReservaRespuesta.model_validate(dict(r._mapping)) for r in reservas]
+
+
+def listar(sesion: Session, pedido_id: UUID) -> list[ReservaRespuesta]:
+    """Las reservas del pedido: activas, consumidas (entregado) o liberadas.
+
+    Una por linea como mucho: un pedido se reserva una sola vez, porque solo
+    se reserva desde borrador. Vacia si nunca se reservo.
+    """
+    repositorio_pedidos.exigir_existente(sesion, pedido_id)
+    filas = sesion.execute(LISTAR_RESERVAS, {"pedido_id": pedido_id})
+    return [ReservaRespuesta.model_validate(dict(r._mapping)) for r in filas]

@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app.errores import ConflictoError, NoEncontradoError, ValidacionError
 from app.fechas import hoy
 from app.schemas.pedidos import PedidoRespuesta
-from app.schemas.transiciones import Cancelar, Entregar
+from app.schemas.transiciones import Cancelar, DespachoDeLinea, Entregar
 from app.services.ventas import repositorio_pedidos
 from app.services.ventas.repositorio_reservas import BLOQUEAR_RAZA, LEER_PEDIDO
 from app.services.ventas.transiciones import puede_pasar, validar_despacho
@@ -82,6 +82,21 @@ CAMBIAR_ESTADO = text(
     "UPDATE pedido SET estado = :estado, actualizado_en = now() WHERE id = :id"
 )
 
+# Lo que salio para el pedido: las celdas despachadas de sus lineas, contadas
+# por linea, banco y dia. Una celda con pedido_item_id es siempre despachada
+# (ck_celda_despacho_solo_despachada). LEFT JOIN: con banco_id NULL salieron
+# sin banco. Las despachadas antes de la 0013 no tienen linea: no aparecen.
+LISTAR_DESPACHOS = text(
+    "SELECT c.pedido_item_id, c.banco_id, b.identificador, c.fecha_despacho, "
+    "count(*) AS cantidad "
+    "FROM celda c JOIN pedido_item pi ON pi.id = c.pedido_item_id "
+    "LEFT JOIN banco b ON b.id = c.banco_id "
+    "WHERE pi.pedido_id = :pedido_id "
+    "GROUP BY pi.numero_linea, c.pedido_item_id, c.banco_id, b.identificador, "
+    "c.fecha_despacho "
+    "ORDER BY pi.numero_linea, c.fecha_despacho, b.identificador NULLS LAST"
+)
+
 
 def cambiar_estado(
     sesion: Session, pedido_id: UUID, datos: Entregar | Cancelar
@@ -107,6 +122,17 @@ def cambiar_estado(
 
     sesion.execute(CAMBIAR_ESTADO, {"id": pedido_id, "estado": datos.estado.value})
     return repositorio_pedidos.obtener(sesion, pedido_id)
+
+
+def listar_despachos(sesion: Session, pedido_id: UUID) -> list[DespachoDeLinea]:
+    """De que bancos salieron las reinas de cada linea, y que dia.
+
+    Vacia mientras el pedido no se entrega. Sin paginar: un pedido se
+    entrega una sola vez, asi que hay como mucho una fila por linea y banco.
+    """
+    repositorio_pedidos.exigir_existente(sesion, pedido_id)
+    filas = sesion.execute(LISTAR_DESPACHOS, {"pedido_id": pedido_id})
+    return [DespachoDeLinea.model_validate(dict(f._mapping)) for f in filas]
 
 
 def _entregar(sesion: Session, pedido_id: UUID, datos: Entregar) -> None:

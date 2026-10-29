@@ -1,4 +1,5 @@
-"""POST /api/v1/pedidos/{id}/estado de punta a punta (#36, DoD).
+"""POST /api/v1/pedidos/{id}/estado de punta a punta (#36, DoD), y los GET de
+/reservas y /despachos que muestran que quedo reservado y que salio.
 
 Los pedidos se crean y se reservan con la API; las celdas enjauladas se
 cargan directo como duenio porque todavia no existen las transiciones por
@@ -631,3 +632,160 @@ def test_la_misma_clave_con_otro_cuerpo_es_409(
 
     assert otra.status_code == 409
     assert codigo(otra) == "idempotency_key_reutilizada"
+
+
+# --- Trazabilidad: GET /reservas y /despachos (frontend #12) ---
+
+
+def leer(
+    api: TestClient, criadero: Criadero, pedido: str, que: str, rol: str = "ventas"
+) -> Any:
+    return api.get(f"{PEDIDOS}/{pedido}/{que}", headers=como(criadero.tenant, rol))
+
+
+def test_las_reservas_del_pedido_siguen_su_estado(
+    api: TestClient, motor_owner: Engine, a: Criadero
+) -> None:
+    enjaular(motor_owner, a, a.italiana, 5, a.norte)
+    pedido = crear_pedido(api, a, (a.italiana, 5))
+    (linea,) = lineas(api, a, pedido)
+
+    antes = leer(api, a, pedido, "reservas")
+    reservar(api, a, pedido)
+    reservado = leer(api, a, pedido, "reservas")
+    assert cambiar(api, a, pedido, entregar((linea, [(a.norte, 5)]))).status_code == 200
+    entregado = leer(api, a, pedido, "reservas")
+
+    assert antes.status_code == 200
+    assert antes.json() == []
+    (reserva,) = reservado.json()
+    assert reserva == {
+        "id": reserva["id"],
+        "pedido_item_id": linea,
+        "raza_id": str(a.italiana),
+        "cantidad": 5,
+        "estado": "activa",
+    }
+    # La misma reserva, consumida: entregar no crea otra.
+    assert [(r["id"], r["estado"]) for r in entregado.json()] == [
+        (reserva["id"], "consumida")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("desde", "estados"),
+    [
+        # Un borrador nunca se reservo: no hay nada que liberar.
+        ("borrador", []),
+        ("reservado", ["liberada"]),
+    ],
+)
+def test_un_cancelado_muestra_si_llego_a_reservarse(
+    api: TestClient, motor_owner: Engine, a: Criadero, desde: str, estados: list[str]
+) -> None:
+    pedido, _ = _pedido_en(api, motor_owner, a, desde)
+    assert cambiar(api, a, pedido, CANCELAR).status_code == 200
+
+    respuesta = leer(api, a, pedido, "reservas")
+
+    assert respuesta.status_code == 200
+    assert [r["estado"] for r in respuesta.json()] == estados
+
+
+def test_los_despachos_dicen_de_que_banco_salio_cada_linea(
+    api: TestClient, motor_owner: Engine, a: Criadero
+) -> None:
+    enjaular(motor_owner, a, a.italiana, 8, a.norte)
+    enjaular(motor_owner, a, a.italiana, 4, a.sur)
+    enjaular(motor_owner, a, a.carniola, 3)
+    pedido = crear_pedido(api, a, (a.italiana, 12), (a.carniola, 3))
+    reservar(api, a, pedido)
+    italianas, carniolas = lineas(api, a, pedido)
+
+    antes = leer(api, a, pedido, "despachos")
+    respuesta = cambiar(
+        api,
+        a,
+        pedido,
+        entregar(
+            (italianas, [(a.sur, 4), (a.norte, 8)]),
+            (carniolas, [(None, 3)]),
+            fecha="2026-10-20",
+        ),
+    )
+    despues = leer(api, a, pedido, "despachos")
+
+    assert antes.status_code == 200
+    assert antes.json() == []
+    assert respuesta.status_code == 200, respuesta.json()
+    # En el orden de las lineas y, dentro de una, por banco; sin banco al final.
+    assert despues.json() == [
+        {
+            "pedido_item_id": italianas,
+            "banco_id": str(a.norte),
+            "identificador": "N",
+            "fecha_despacho": "2026-10-20",
+            "cantidad": 8,
+        },
+        {
+            "pedido_item_id": italianas,
+            "banco_id": str(a.sur),
+            "identificador": "S",
+            "fecha_despacho": "2026-10-20",
+            "cantidad": 4,
+        },
+        {
+            "pedido_item_id": carniolas,
+            "banco_id": None,
+            "identificador": None,
+            "fecha_despacho": "2026-10-20",
+            "cantidad": 3,
+        },
+    ]
+
+
+def test_los_despachos_son_solo_los_del_pedido(
+    api: TestClient, motor_owner: Engine, a: Criadero
+) -> None:
+    enjaular(motor_owner, a, a.italiana, 10, a.norte)
+    uno, otro = (crear_pedido(api, a, (a.italiana, 5)) for _ in range(2))
+    for pedido in (uno, otro):
+        reservar(api, a, pedido)
+        (linea,) = lineas(api, a, pedido)
+        assert (
+            cambiar(api, a, pedido, entregar((linea, [(a.norte, 5)]))).status_code
+            == 200
+        )
+
+    respuesta = leer(api, a, uno, "despachos")
+
+    (despacho,) = respuesta.json()
+    assert despacho["pedido_item_id"] == lineas(api, a, uno)[0]
+    assert despacho["cantidad"] == 5
+
+
+@pytest.mark.parametrize("que", ["reservas", "despachos"])
+def test_la_trazabilidad_de_otro_criadero_no_existe(
+    api: TestClient, motor_owner: Engine, a: Criadero, b: Criadero, que: str
+) -> None:
+    pedido, _ = _pedido_en(api, motor_owner, a, "entregado")
+
+    de_otro = leer(api, b, pedido, que)
+    inexistente = leer(api, a, str(uuid.uuid4()), que)
+
+    for respuesta in (de_otro, inexistente):
+        assert respuesta.status_code == 404
+        assert codigo(respuesta) == "pedido_no_encontrado"
+
+
+@pytest.mark.parametrize("rol", ["produccion", "lectura"])
+def test_todos_los_roles_ven_la_trazabilidad(
+    api: TestClient, motor_owner: Engine, a: Criadero, rol: str
+) -> None:
+    pedido, _ = _pedido_en(api, motor_owner, a, "entregado")
+
+    for que in ("reservas", "despachos"):
+        respuesta = leer(api, a, pedido, que, rol)
+
+        assert respuesta.status_code == 200, respuesta.json()
+        assert len(respuesta.json()) == 1

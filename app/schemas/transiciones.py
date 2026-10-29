@@ -8,6 +8,9 @@ transiciones.py.
 
 reservado no entra por aca: lo hace POST /api/v1/pedidos/{id}/reservas (#35).
 La respuesta es PedidoRespuesta, la misma de app/schemas/pedidos.py.
+
+Al final, DespachoDeLinea: lo que sale de GET /api/v1/pedidos/{id}/despachos,
+lo que quedo despachado para el pedido (trazabilidad, frontend #12).
 """
 
 from __future__ import annotations
@@ -93,3 +96,20 @@ class Cancelar(BaseModel):
 # corresponde: un error de entregar no se mezcla con los de cancelar. Otro
 # estado (reservado incluido) es 422.
 CambioDeEstado = Annotated[Entregar | Cancelar, Field(discriminator="estado")]
+
+
+class DespachoDeLinea(BaseModel):
+    """Respuesta de GET /api/v1/pedidos/{id}/despachos: lo que salio.
+
+    Cuantas reinas de una linea salieron de un banco y que dia, contadas
+    desde las celdas despachadas (migracion 0013). Es la misma forma que la
+    SalidaDeBanco del cuerpo de entregar, con el identificador del banco
+    para mostrarlo sin otro request.
+    """
+
+    pedido_item_id: UUID
+    # None: salieron enjauladas que no estaban en ningun banco.
+    banco_id: UUID | None
+    identificador: str | None
+    fecha_despacho: date
+    cantidad: int
