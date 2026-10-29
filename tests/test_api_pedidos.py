@@ -183,6 +183,13 @@ def test_crea_un_pedido_nacional(
     assert item["precio_unitario"] == "35000.50"
     # Copiada del item vendible, que tiene el default de la 0004.
     assert item["alicuota"] == "0.21"
+    # Calculados, nunca guardados (#113): 10 x 35000.50 = 350005.00 al 21%.
+    assert item["neto"] == "350005.00"
+    assert (pedido["neto"], pedido["iva"], pedido["total"]) == (
+        "350005.00",
+        "73501.05",
+        "423506.05",
+    )
 
 
 def test_crea_un_pedido_de_exportacion_completo(
@@ -198,6 +205,12 @@ def test_crea_un_pedido_de_exportacion_completo(
         "EUR",
         "DE",
         "CPT",
+    )
+    # En euros y sin tipo de cambio (#113); en exportacion no se cobra IVA.
+    assert (pedido["neto"], pedido["iva"], pedido["total"]) == (
+        "350005.00",
+        "0.00",
+        "350005.00",
     )
 
 
