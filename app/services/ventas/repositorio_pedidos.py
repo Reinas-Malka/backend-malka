@@ -23,6 +23,12 @@ from sqlalchemy.orm import Session
 from app.errores import NoEncontradoError, ValidacionError
 from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del_cursor
 from app.schemas.pedidos import PedidoCrear, PedidoItemRespuesta, PedidoRespuesta
+from app.services.documentos.importes import (
+    MONEDA_LOCAL,
+    Alicuota,
+    Linea,
+    calcular_totales_pedido,
+)
 from app.services.ventas.clientes import TipoCliente
 from app.services.ventas.pedidos import EstadoPedido, validar_pedido
 
@@ -142,9 +148,23 @@ def _alicuotas(sesion: Session, datos: PedidoCrear) -> dict[UUID, Any]:
 
 
 def _a_respuesta(pedido: Row[Any], items: Sequence[Row[Any]]) -> PedidoRespuesta:
+    # Los totales se calculan en cada lectura, con la alicuota y el precio que
+    # la linea copio al crearse (#113). Exportacion si y solo si no es en pesos:
+    # validar_pedido ya garantiza que coinciden.
+    totales = calcular_totales_pedido(
+        [Linea(i.cantidad, i.precio_unitario, Alicuota(i.alicuota)) for i in items],
+        moneda=pedido.moneda,
+        exportacion=pedido.moneda != MONEDA_LOCAL,
+    )
     return PedidoRespuesta(
         **pedido._mapping,
-        items=[PedidoItemRespuesta.model_validate(dict(i._mapping)) for i in items],
+        items=[
+            PedidoItemRespuesta.model_validate({**i._mapping, "neto": neto})
+            for i, neto in zip(items, totales.lineas_neto, strict=True)
+        ],
+        neto=totales.neto,
+        iva=totales.iva,
+        total=totales.total,
     )
 
 
