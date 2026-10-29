@@ -44,6 +44,7 @@ ORDEN = (
     "embarque",
     "documento_embarque",
     "documento",
+    "comprobante",
     "idempotencia",
 )
 
@@ -160,6 +161,16 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         "INSERT INTO documento (archivo_s3_key, nombre, tipo_contenido, "
         "tamano_bytes, subido_por) VALUES (:key, 'factura.pdf', "
         "'application/pdf', 1024, 'sub-de-prueba') RETURNING id",
+        key=f"documentos/{tenant}/factura.pdf",
+    )
+    # Factura E del cliente de exportacion, sobre el PDF de arriba (#108).
+    insertar(
+        "comprobante",
+        "INSERT INTO comprobante (tipo, cliente_id, punto_venta, numero, "
+        "fecha_emision, moneda, importe, tipo_cambio, archivo_s3_key, "
+        "cargado_por) VALUES ('E', :cliente, 3, 45, '2026-10-20', 'EUR', "
+        "350.00, 1125.5, :key, 'sub-de-prueba') RETURNING id",
+        cliente=filas["cliente"],
         key=f"documentos/{tenant}/factura.pdf",
     )
     # La misma clave en los dos criaderos: es unica por tenant, no global (#25).
