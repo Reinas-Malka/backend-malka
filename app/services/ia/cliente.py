@@ -22,6 +22,11 @@ MODELO = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # Temperatura baja: el borrador tiene que ser reproducible, no creativo.
 TEMPERATURA = 0.0
 
+# Tope de tokens de salida por llamada (#45): un borrador ronda los 1000; el
+# tope corta una respuesta desbocada antes de que cueste. Los topes por
+# criadero estan en app/services/ia/limites.py.
+MAX_TOKENS_SALIDA = 1500
+
 
 @dataclass(frozen=True)
 class RespuestaIA:
@@ -62,7 +67,7 @@ def pedir_al_modelo(
         modelId=MODELO,
         system=[{"text": prompt_del_sistema}],
         messages=[{"role": "user", "content": [{"text": mensaje}]}],
-        inferenceConfig={"temperature": TEMPERATURA},
+        inferenceConfig={"temperature": TEMPERATURA, "maxTokens": MAX_TOKENS_SALIDA},
     )
     latencia_ms = round((time.monotonic() - comienzo) * 1000)
 

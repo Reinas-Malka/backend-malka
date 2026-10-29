@@ -42,6 +42,8 @@ class ErrorDeApi(Exception):
         self.message = message
         self.code = code or self.codigo_por_defecto
         self.details = details or {}
+        # Cabeceras extra de la respuesta (Retry-After en un 429).
+        self.headers: dict[str, str] = {}
 
 
 class ConflictoError(ErrorDeApi):
@@ -94,12 +96,35 @@ class NoEncontradoError(ErrorDeApi):
     codigo_por_defecto = "no_encontrado"
 
 
+class LimiteExcedidoError(ErrorDeApi):
+    """Se paso un tope de uso (429). Dice cuando reintentar (Retry-After).
+
+    Ejemplo: el criadero ya hizo hoy todas las llamadas a la IA que tiene.
+    """
+
+    status_code = 429
+    codigo_por_defecto = "limite_excedido"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reintentar_en: int,
+        code: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, code=code, details=details)
+        self.reintentar_en = max(1, reintentar_en)
+        self.headers = {"Retry-After": str(self.reintentar_en)}
+
+
 CODIGOS_HTTP = {
     400: "pedido_invalido",
     401: "no_autenticado",
     403: "sin_permiso",
     404: "no_encontrado",
     405: "metodo_no_permitido",
+    429: "limite_excedido",
 }
 
 
@@ -108,6 +133,7 @@ def respuesta_de_error(
     code: str,
     message: str,
     details: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Unico lugar donde se arma el cuerpo de un error."""
     request_id = request_id_actual()
@@ -122,7 +148,7 @@ def respuesta_de_error(
     return JSONResponse(
         status_code=status_code,
         content=cuerpo,
-        headers={"x-request-id": request_id},
+        headers={**(headers or {}), "x-request-id": request_id},
     )
 
 
@@ -148,7 +174,9 @@ def registrar_manejadores(app: FastAPI) -> None:
 
     @app.exception_handler(ErrorDeApi)
     async def _error_de_api(request: Request, exc: ErrorDeApi) -> JSONResponse:
-        return respuesta_de_error(exc.status_code, exc.code, exc.message, exc.details)
+        return respuesta_de_error(
+            exc.status_code, exc.code, exc.message, exc.details, exc.headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _error_de_validacion(

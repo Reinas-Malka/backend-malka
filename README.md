@@ -460,6 +460,8 @@ El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No
 | `COGNITO_ISSUER` | Emisor esperado en los ID tokens (`iss`) | — |
 | `COGNITO_CLIENT_ID` | App client de la SPA: audiencia esperada (`aud`) | — |
 | `COGNITO_JWKS` | Ruta al JWKS versionado (no una URL; ver ADR 0010) | `app/jwks_cognito_dev.json` |
+| `IA_LLAMADAS_POR_MINUTO` | Tope de llamadas a la IA por criadero por minuto (#45). Un valor inválido o ≤ 0 usa el de por defecto | `10` |
+| `IA_LLAMADAS_POR_DIA` | Tope de llamadas a la IA por criadero por día de Argentina (#45) | `200` |
 
 En local no hace falta definirlas. En AWS las carga Terraform en la Lambda: `APP_VERSION` toma el valor de la variable `image_tag`.
 
@@ -736,6 +738,16 @@ El motivo de tener dos repositorios está documentado en [`docs/adr/0004-dos-rep
 - Plan B: Sonnet 4.5. Opus descartado por costo.
 - `claude-3-5-haiku-20241022` está EOL: devuelve ResourceNotFoundException.
 - El plan gratuito de AWS no bloquea Bedrock (riesgo del CP2 descartado).
+- 29/10/2026: la cuenta pidió el formulario de uso de Anthropic (Bedrock → Model catalog). Enviado, `converse` volvió a responder (21 tokens, 495 ms).
+
+### Límite de uso por criadero (#45)
+
+- **Por minuto** (`IA_LLAMADAS_POR_MINUTO`, 10) y **por día** de Argentina (`IA_LLAMADAS_POR_DIA`, 200), contados por criadero en la tabla `llamada_ia` (migración 0015, con RLS).
+- Al pasarse: **429** `limite_ia_por_minuto` o `limite_ia_diario`, con `Retry-After` (60 s, o los segundos hasta la medianoche) y el `tope` en `details`.
+- **Tokens de salida por llamada**: `maxTokens` 1500 en cada `converse`.
+- Cada llamada se reserva antes de hacerla (`reservar_llamada`, en la misma transacción del pedido: si algo falla, no cuenta) y se le anotan los tokens después (`registrar_consumo`).
+- **Métrica por criadero** en CloudWatch, namespace `MalkaSuite/IA`, dimensión `tenant_id`: `Llamadas`, `TokensEntrada` y `TokensSalida` (Embedded Metric Format, sin llamar a la API de CloudWatch).
+- Con los valores por defecto, el gasto máximo ronda 1,60 USD diarios por criadero.
 
 ## Costo fijo de infraestructura
 
