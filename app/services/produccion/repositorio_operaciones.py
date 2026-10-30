@@ -56,9 +56,12 @@ from app.services.produccion import (
     repositorio_tandas,
 )
 from app.services.produccion.operaciones import NucleoOcupado, repartir
+from app.services.ventas.repositorio_reservas import BLOQUEAR_RAZA
 
 # Las consultas se escriben completas, sin armar SQL con f-strings.
-BLOQUEAR_TANDA = text("SELECT id, fecha_traslarve FROM tanda WHERE id = :id FOR UPDATE")
+BLOQUEAR_TANDA = text(
+    "SELECT id, fecha_traslarve, raza_id FROM tanda WHERE id = :id FOR UPDATE"
+)
 
 CONTAR_EN_ESTADO = text(
     "SELECT count(*) FROM celda WHERE tanda_id = :tanda AND estado = :estado"
@@ -129,10 +132,20 @@ DESCARTAR_RESTO = text(
     "WHERE tanda_id = :tanda AND estado = 'introducida'"
 )
 
+# Elige y bloquea las celdas como el despacho (repositorio_transiciones,
+# DESPACHAR): las mas viejas primero, FOR UPDATE, y el UPDATE vuelve a exigir
+# enjaulada y sin banco. Asi nunca le pone banco a una celda que un despacho
+# ya se llevo. RETURNING: si vuelven menos que :cantidad, no alcanzaba.
 PASAR_A_BANCO = text(
+    "WITH elegidas AS MATERIALIZED ("
+    "SELECT id FROM celda WHERE tanda_id = :tanda "
+    "AND estado = 'enjaulada' AND banco_id IS NULL "
+    "ORDER BY fecha_enjaulado, id LIMIT :cantidad FOR UPDATE"
+    ") "
     "UPDATE celda SET banco_id = :banco, actualizado_en = now() "
-    "WHERE id IN (SELECT id FROM celda WHERE tanda_id = :tanda "
-    "AND estado = 'enjaulada' AND banco_id IS NULL ORDER BY id LIMIT :cantidad)"
+    "FROM elegidas WHERE celda.id = elegidas.id "
+    "AND celda.estado = 'enjaulada' AND celda.banco_id IS NULL "
+    "RETURNING celda.id"
 )
 
 
@@ -287,6 +300,9 @@ def _cosechar(
 def _pasar_a_banco(
     sesion: Session, tanda: Row[Any], datos: OperacionPasarABanco
 ) -> OperacionRealizada:
+    # El mismo lock de raza que la reserva y el despacho: un despacho "sin
+    # banco" de esta raza termina antes de contar, y no hay celdas en juego.
+    sesion.execute(BLOQUEAR_RAZA, {"raza_id": tanda.raza_id})
     hay = _contar(sesion, CONTAR_ENJAULADAS_SIN_BANCO, tanda.id)
     if datos.cantidad > hay:
         _excedida(datos.cantidad, hay, "enjaulada sin banco")
@@ -305,10 +321,13 @@ def _pasar_a_banco(
             code="banco_lleno",
             details={"caben": caben, "capacidad_max": banco.capacidad_max},
         )
-    sesion.execute(
+    movidas = sesion.execute(
         PASAR_A_BANCO,
         {"tanda": tanda.id, "banco": datos.banco_id, "cantidad": datos.cantidad},
-    )
+    ).all()
+    if len(movidas) < datos.cantidad:
+        # Con el lock de raza no deberia pasar; si pasa, nada a medias.
+        _excedida(datos.cantidad, len(movidas), "enjaulada sin banco")
     return _resultado(sesion, tanda.id, datos.accion, datos.cantidad)
 
 

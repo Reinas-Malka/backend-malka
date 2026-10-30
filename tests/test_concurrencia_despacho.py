@@ -25,7 +25,9 @@ from sqlalchemy.orm import Session
 
 from app import db
 from app.errores import ConflictoError
+from app.schemas.produccion import OperacionPasarABanco
 from app.schemas.transiciones import Entregar
+from app.services.produccion import repositorio_operaciones
 from app.services.ventas import repositorio_transiciones
 from tests import test_concurrencia_reservas as reservas
 from tests.conftest import fijar_tenant
@@ -248,3 +250,99 @@ def test_despacha_exactamente_lo_pedido_aunque_el_plan_reejecute_la_eleccion(
 
     italiana = disponibilidad(motor, criadero.tenant, criadero.italiana)
     assert (italiana.enjauladas, italiana.reservadas) == (4, 0)
+
+
+# --- Pasar a banco contra un despacho de la misma raza (revisión 29/10) ---
+
+
+@pytest.fixture
+def sin_banco(
+    motor_owner: Engine, criadero: Criadero
+) -> Iterator[tuple[uuid.UUID, uuid.UUID]]:
+    """Una tanda con 10 italianas enjauladas sin banco, y un banco vacío."""
+    with motor_owner.begin() as c:
+        fijar_tenant(c, criadero.tenant)
+        destino = _id(c, "INSERT INTO banco (identificador) VALUES ('D') RETURNING id")
+        tanda = _id(
+            c,
+            "INSERT INTO tanda (raza_id, fecha_traslarve) "
+            "VALUES (:raza, '2026-09-20') RETURNING id",
+            raza=criadero.italiana,
+        )
+        c.execute(
+            text(
+                "INSERT INTO celda (tanda_id, estado, nucleo_id, fecha_introduccion, "
+                "fecha_enjaulado) SELECT :tanda, 'enjaulada', :nucleo, "
+                "'2026-09-30', '2026-10-16' FROM generate_series(1, 10)"
+            ),
+            {"tanda": tanda, "nucleo": criadero.nucleo},
+        )
+    yield tanda, destino
+    with motor_owner.begin() as c:
+        fijar_tenant(c, criadero.tenant)
+        c.execute(text("DELETE FROM celda WHERE true"))
+        c.execute(text("DELETE FROM banco WHERE true"))
+
+
+def _sin_banco(motor: Engine, criadero: Criadero, pedido: uuid.UUID) -> Entregar:
+    """Reserva el pedido y arma su despacho desde las enjauladas sin banco."""
+    assert reservar(motor, criadero.tenant, pedido) == "ok"
+    with Session(motor) as s, s.begin():
+        s.execute(db.FIJAR_TENANT, {"tenant_id": str(criadero.tenant)})
+        linea = s.execute(
+            text("SELECT id, cantidad FROM pedido_item WHERE pedido_id = :p"),
+            {"p": pedido},
+        ).one()
+    return Entregar.model_validate(
+        {
+            "estado": "entregado",
+            "lineas": [
+                {
+                    "pedido_item_id": str(linea.id),
+                    "bancos": [{"banco_id": None, "cantidad": linea.cantidad}],
+                }
+            ],
+        }
+    )
+
+
+def test_pasar_a_banco_espera_al_despacho_y_no_toca_celdas_despachadas(
+    motor: Engine,
+    motor_owner: Engine,
+    criadero: Criadero,
+    sin_banco: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    tanda, destino = sin_banco
+    [pedido] = pedidos(motor_owner, criadero, criadero.italiana, 5)
+    datos = _sin_banco(motor, criadero, pedido)
+
+    def pasar() -> str:
+        operacion = OperacionPasarABanco(
+            accion="pasar_a_banco", cantidad=5, banco_id=destino
+        )
+        try:
+            with Session(motor) as s, s.begin():
+                s.execute(db.FIJAR_TENANT, {"tenant_id": str(criadero.tenant)})
+                repositorio_operaciones.operar(s, tanda, operacion)
+        except ConflictoError as error:
+            return error.code
+        return "ok"
+
+    resultado, espero = _mientras_despacha(motor, criadero.tenant, pedido, datos, pasar)
+
+    # Toma el mismo lock de raza que el despacho: espera, y después pasa
+    # al banco las 5 que siguen enjauladas, nunca las que ya salieron.
+    assert espero
+    assert resultado == "ok"
+    with motor_owner.begin() as c:
+        fijar_tenant(c, criadero.tenant)
+        por_estado = dict(
+            c.execute(
+                text(
+                    "SELECT estado || ':' || (banco_id IS NOT NULL), count(*) "
+                    "FROM celda WHERE tanda_id = :t GROUP BY 1"
+                ),
+                {"t": tanda},
+            ).all()
+        )
+    assert por_estado == {"despachada:false": 5, "enjaulada:true": 5}

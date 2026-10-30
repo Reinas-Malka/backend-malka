@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.contexto import request_id_actual
@@ -94,6 +95,9 @@ class NoEncontradoError(ErrorDeApi):
     codigo_por_defecto = "no_encontrado"
 
 
+# lock_not_available (lock_timeout) y deadlock_detected.
+SQLSTATE_OCUPADA = {"55P03", "40P01"}
+
 CODIGOS_HTTP = {
     400: "pedido_invalido",
     401: "no_autenticado",
@@ -168,3 +172,18 @@ def registrar_manejadores(app: FastAPI) -> None:
         codigo = CODIGOS_HTTP.get(exc.status_code, "error_http")
         mensaje = exc.detail if isinstance(exc.detail, str) else "Error HTTP."
         return respuesta_de_error(exc.status_code, codigo, mensaje)
+
+    @app.exception_handler(OperationalError)
+    async def _base_ocupada(request: Request, exc: OperationalError) -> JSONResponse:
+        # Un lock que no se libero a tiempo (lock_timeout de app/db.py) o un
+        # deadlock: otra operacion esta usando esos datos. No es un bug: 409
+        # para que el front reintente. Cualquier otro error de la base sigue
+        # siendo un 500, con su traza en el log.
+        if getattr(exc.orig, "sqlstate", None) not in SQLSTATE_OCUPADA:
+            raise exc
+        return respuesta_de_error(
+            409,
+            "operacion_en_curso",
+            "Otra operación está usando estos datos. Probá de nuevo en unos "
+            "segundos.",
+        )
