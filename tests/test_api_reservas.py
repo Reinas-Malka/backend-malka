@@ -25,8 +25,9 @@ pytestmark = [
 PEDIDOS = "/api/v1/pedidos"
 
 # De hijas a padres. Las primeras se vacian despues de cada test; el resto
-# es de los criaderos y se borra al final del modulo.
-POR_TEST = ("reserva", "pedido_item", "pedido", "celda", "tanda")
+# es de los criaderos y se borra al final del modulo. idempotencia la llenan
+# las reservas con Idempotency-Key.
+POR_TEST = ("idempotencia", "reserva", "pedido_item", "pedido", "celda", "tanda")
 DEL_CRIADERO = ("nucleo", "parque", "cliente", "item_vendible", "raza")
 
 
@@ -175,10 +176,15 @@ def crear_pedido(
 
 
 def reservar(
-    api: TestClient, criadero: Criadero, pedido_id: str, rol: str = "ventas"
+    api: TestClient,
+    criadero: Criadero,
+    pedido_id: str,
+    rol: str = "ventas",
+    **headers: str,
 ) -> Any:
     return api.post(
-        f"{PEDIDOS}/{pedido_id}/reservas", headers=como(criadero.tenant, rol)
+        f"{PEDIDOS}/{pedido_id}/reservas",
+        headers={**como(criadero.tenant, rol), **headers},
     )
 
 
@@ -301,6 +307,59 @@ def test_reservar_dos_veces_es_409_y_no_cuenta_doble(
     assert codigo(respuesta) == "pedido_no_reservable"
     assert respuesta.json()["error"]["details"] == {"estado": "reservado"}
     assert reservadas(api, a, a.italiana) == 3
+
+
+# --- Idempotency-Key (frontend #14) ---
+
+
+def test_con_la_misma_clave_un_reintento_devuelve_las_mismas_reservas(
+    api: TestClient, motor_owner: Engine, a: Criadero
+) -> None:
+    enjaular(motor_owner, a, a.italiana, 10)
+    pedido = crear_pedido(api, a, (a.italiana, 3))
+    clave = str(uuid.uuid4())
+
+    primera = reservar(api, a, pedido, **{"Idempotency-Key": clave})
+    segunda = reservar(api, a, pedido, **{"Idempotency-Key": clave})
+
+    assert primera.status_code == segunda.status_code == 201
+    assert segunda.headers["Idempotent-Replayed"] == "true"
+    assert segunda.json() == primera.json()
+    assert reservadas(api, a, a.italiana) == 3
+
+
+def test_tras_stock_insuficiente_la_misma_clave_vuelve_a_intentar(
+    api: TestClient, motor_owner: Engine, a: Criadero
+) -> None:
+    """El 409 no se guarda: el reintento ve la disponibilidad nueva."""
+    enjaular(motor_owner, a, a.italiana, 3)
+    pedido = crear_pedido(api, a, (a.italiana, 5))
+    clave = {"Idempotency-Key": str(uuid.uuid4())}
+    assert codigo(reservar(api, a, pedido, **clave)) == "stock_insuficiente"
+
+    enjaular(motor_owner, a, a.italiana, 2)
+    reintento = reservar(api, a, pedido, **clave)
+
+    assert reintento.status_code == 201, reintento.json()
+    assert "Idempotent-Replayed" not in reintento.headers
+    assert estado_del_pedido(api, a, pedido) == "reservado"
+    assert reservadas(api, a, a.italiana) == 5
+
+
+def test_la_misma_clave_en_otro_pedido_es_409(
+    api: TestClient, motor_owner: Engine, a: Criadero
+) -> None:
+    enjaular(motor_owner, a, a.italiana, 10)
+    uno = crear_pedido(api, a, (a.italiana, 3))
+    otro = crear_pedido(api, a, (a.italiana, 4))
+    clave = {"Idempotency-Key": str(uuid.uuid4())}
+    assert reservar(api, a, uno, **clave).status_code == 201
+
+    respuesta = reservar(api, a, otro, **clave)
+
+    assert respuesta.status_code == 409
+    assert codigo(respuesta) == "idempotency_key_reutilizada"
+    assert estado_del_pedido(api, a, otro) == "borrador"
 
 
 def test_las_reinas_de_otro_criadero_no_cuentan(

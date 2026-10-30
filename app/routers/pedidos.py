@@ -76,8 +76,10 @@ def obtener_pedido(
 
 
 # Sin cuerpo: reserva todas las lineas del pedido, con su raza y cantidad.
-# Sin Idempotency-Key: un reintento encuentra el pedido ya reservado y
-# responde 409 pedido_no_reservable, sin reservar dos veces.
+# Con Idempotency-Key, un reintento devuelve las reservas ya hechas (frontend
+# #14); sin ella, encuentra el pedido ya reservado y responde 409
+# pedido_no_reservable, sin reservar dos veces. Un 409 stock_insuficiente no
+# se guarda: la misma clave vuelve a intentar con la disponibilidad nueva.
 @router.post(
     "/{pedido_id}/reservas",
     status_code=201,
@@ -85,9 +87,13 @@ def obtener_pedido(
     dependencies=SOLO_ESCRITURA,
 )
 def reservar_pedido(
-    pedido_id: UUID, sesion: Session = Depends(obtener_sesion)
-) -> list[ReservaRespuesta]:
-    return repositorio_reservas.reservar(sesion, pedido_id)
+    pedido_id: UUID,
+    solicitud: PedidoIdempotente = Depends(pedido_idempotente),
+    sesion: Session = Depends(obtener_sesion),
+) -> JSONResponse:
+    return responder_una_vez(
+        sesion, solicitud, lambda: repositorio_reservas.reservar(sesion, pedido_id)
+    )
 
 
 # Las reservas en cualquier estado: activa, consumida (entregado) o liberada

@@ -124,7 +124,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | POST | `/api/v1/pedidos` | Alta de pedido con sus líneas, siempre en `borrador`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201, o 422 si no es coherente con el cliente (ver [Pedidos](#pedidos)). |
 | GET | `/api/v1/pedidos` | Pedidos del criadero con sus líneas, del más nuevo al más viejo. Filtros opcionales `?estado=` y `?cliente_id=`; paginado con `?limite=` y `?cursor=` (ver más abajo). Todos los roles. |
 | GET | `/api/v1/pedidos/{id}` | Un pedido con sus líneas, en el orden en que se cargaron (`numero_linea`). 404 si no existe o es de otro criadero. Todos los roles. |
-| POST | `/api/v1/pedidos/{id}/reservas` | Reserva todas las líneas de un pedido en `borrador`, sin cuerpo, y lo pasa a `reservado`. Roles `admin` y `ventas`. 201 con las reservas; 409 `stock_insuficiente` con el disponible por raza, o `pedido_no_reservable` si no está en borrador (ver [Reservas](#reservas)). |
+| POST | `/api/v1/pedidos/{id}/reservas` | Reserva todas las líneas de un pedido en `borrador`, sin cuerpo, y lo pasa a `reservado`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 201 con las reservas; 409 `stock_insuficiente` con el disponible por raza, o `pedido_no_reservable` si no está en borrador (ver [Reservas](#reservas)). |
 | POST | `/api/v1/pedidos/{id}/estado` | Entrega un pedido `reservado`, eligiendo de qué bancos sale cada línea, o cancela uno en `borrador` o `reservado`. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 200 con el pedido; 409 `transicion_invalida` o `stock_insuficiente_en_banco`; 422 `despacho_invalido` o `banco_no_encontrado` (ver [Despacho y cancelación](#despacho-y-cancelación)). |
 | GET | `/api/v1/pedidos/{id}/reservas` | Las reservas del pedido en cualquier estado (`activa`, `consumida` al entregar, `liberada` al cancelar), una por línea como mucho y en el orden de las líneas. Lista vacía si nunca se reservó. 404 `pedido_no_encontrado` si no existe o es de otro criadero. Todos los roles. |
 | GET | `/api/v1/pedidos/{id}/despachos` | Lo que salió para el pedido, contado desde las celdas despachadas: por línea, `banco_id` (`null` = sin banco), `identificador`, `fecha_despacho` y `cantidad`. Lista vacía hasta que se entrega. 404 `pedido_no_encontrado` si no existe o es de otro criadero. Todos los roles. |
@@ -312,6 +312,8 @@ Son 422 y no 404 porque la ruta existe: lo que está mal es un dato del cuerpo.
 ```
 
 5. Si alcanzan todas, crea una reserva `activa` por línea y el pedido pasa a `reservado`.
+
+Con `Idempotency-Key`, reintentar después de un 201 (por ejemplo, si la respuesta se perdió) devuelve las mismas reservas. Un 409 no se guarda: tras un `stock_insuficiente`, la misma clave vuelve a intentar con la disponibilidad nueva (frontend #14).
 
 Las reservas van por raza, sin banco: los bancos se eligen al despachar, que las pasa a `consumida`; cancelar el pedido las pasa a `liberada` (ver [Despacho y cancelación](#despacho-y-cancelación)). No vencen. `tests/test_concurrencia_reservas.py` prueba 20 pedidos de 10 reinas contra 100: se reservan exactamente 10.
 
