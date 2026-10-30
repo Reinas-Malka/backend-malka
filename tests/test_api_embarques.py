@@ -38,10 +38,23 @@ def criaderos(motor_owner: Engine) -> Iterator[tuple[uuid.UUID, uuid.UUID]]:
     for tenant in (a, b):
         with motor_owner.begin() as c:
             crear_tenant(c, tenant)
+            fijar_tenant(c, tenant)
+            # Los PDF de los 6 tipos, ya subidos con POST /documentos/subidas
+            # (#102): el embarque solo registra archivos que existen.
+            for tipo in TipoDocumentoEmbarque:
+                c.execute(
+                    text(
+                        "INSERT INTO documento (archivo_s3_key, nombre, "
+                        "tipo_contenido, tamano_bytes, subido_por) VALUES "
+                        "(:clave, 'doc.pdf', 'application/pdf', 1024, 'usuario-1')"
+                    ),
+                    {"clave": f"documentos/{tenant}/{tipo.value}.pdf"},
+                )
     yield a, b
     for tenant in (a, b):
         with motor_owner.begin() as c:
             fijar_tenant(c, tenant)
+            c.execute(text("DELETE FROM documento WHERE true"))
             c.execute(text("DELETE FROM tenant WHERE id = :id"), {"id": tenant})
 
 
@@ -198,6 +211,29 @@ def test_no_se_registra_un_archivo_de_otro_criadero(
 
     assert respuesta.status_code == 422
     assert codigo(respuesta) == "archivo_de_otro_criadero"
+
+
+def test_no_se_registra_un_archivo_que_no_se_subio(
+    api: TestClient, criaderos: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    """Sin esto, los 6 documentos se completaban con claves inventadas."""
+    tenant, _ = criaderos
+    embarque_id = crear(api, tenant)
+
+    respuesta = api.post(
+        f"{URL}/{embarque_id}/documentos",
+        json=documento(
+            tenant,
+            TipoDocumentoEmbarque.DTE,
+            archivo_s3_key=f"documentos/{tenant}/inventado.pdf",
+        ),
+        headers=como(tenant),
+    )
+
+    assert respuesta.status_code == 422
+    assert codigo(respuesta) == "archivo_inexistente"
+    completitud = api.get(f"{URL}/{embarque_id}/completitud", headers=como(tenant))
+    assert "dte" in completitud.json()["faltantes"]
 
 
 # --- Alta, lectura y edicion ---
