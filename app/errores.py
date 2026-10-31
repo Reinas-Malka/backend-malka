@@ -21,6 +21,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.contexto import request_id_actual
 
+# Errores de la base que no son bugs sino otra operacion usando los mismos
+# datos: lock_not_available (lock_timeout de app/db.py) y deadlock_detected.
+SQLSTATE_OCUPADA = {"55P03", "40P01"}
+
 
 class ErrorDeApi(Exception):
     """Base de los errores que la API devuelve a proposito.
@@ -94,9 +98,6 @@ class NoEncontradoError(ErrorDeApi):
     status_code = 404
     codigo_por_defecto = "no_encontrado"
 
-
-# lock_not_available (lock_timeout) y deadlock_detected.
-SQLSTATE_OCUPADA = {"55P03", "40P01"}
 
 CODIGOS_HTTP = {
     400: "pedido_invalido",
