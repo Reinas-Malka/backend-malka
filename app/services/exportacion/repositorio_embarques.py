@@ -9,6 +9,9 @@ Reglas, ademas de las del schema:
 - Un documento de cada tipo por embarque (409 documento_duplicado).
 - La guia aerea no se repite entre embarques del criadero (409
   awb_duplicado).
+- El archivo del documento se subio en este criadero con POST
+  /api/v1/documentos/subidas (422 archivo_inexistente): sin esto, los 6
+  documentos se completaban con claves inventadas (revision 29/10).
 """
 
 from __future__ import annotations
@@ -87,6 +90,15 @@ LISTAR_DOCUMENTOS = text(
 )
 
 LEER_TIPOS = text("SELECT tipo FROM documento_embarque WHERE embarque_id = :id")
+
+# El PDF esta registrado en el criadero (RLS) y, si no, si la key es de este
+# criadero: una de otro sigue respondiendo archivo_de_otro_criadero (CHECK).
+LEER_ARCHIVO = text(
+    "SELECT EXISTS (SELECT 1 FROM documento WHERE archivo_s3_key = :clave) "
+    "AS subido, "
+    "starts_with(:clave, 'documentos/' || current_setting('app.tenant_id') || '/') "
+    "AS propio"
+)
 
 # Orden fijo de los 6 tipos (docs/dominio.md) para listar los documentos.
 ORDEN_DE_TIPOS = {
@@ -201,10 +213,22 @@ def actualizar(
     return obtener(sesion, embarque_id)
 
 
+def _exigir_subido(sesion: Session, clave: str) -> None:
+    archivo = sesion.execute(LEER_ARCHIVO, {"clave": clave}).one()
+    if archivo.subido:
+        return
+    if not archivo.propio:
+        raise _archivo_ajeno()
+    raise ValidacionError(
+        "El archivo no esta subido en este criadero.", code="archivo_inexistente"
+    )
+
+
 def agregar_documento(
     sesion: Session, embarque_id: UUID, datos: DocumentoCrear
 ) -> DocumentoRespuesta:
     _bloquear_abierto(sesion, embarque_id)
+    _exigir_subido(sesion, datos.archivo_s3_key)
     fila = escribir(
         sesion,
         INSERTAR_DOCUMENTO,
