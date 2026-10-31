@@ -31,6 +31,20 @@ FIJAR_TENANT = text("SELECT set_config('app.tenant_id', :tenant_id, true)")
 # de API Gateway. Con este tope el request falla rapido y con un error claro.
 CONNECT_TIMEOUT_S = 5
 
+# Topes de espera de cada request de negocio (revision 29/10). Sin ellos, un
+# FOR UPDATE o un lock de raza trabado espera hasta el corte de API Gateway
+# (29 s) con la unica conexion de la Lambda tomada. Esperar un lock mas de
+# 5 s ya es anormal: responde 409 operacion_en_curso (app/errores.py) y el
+# front reintenta. Una consulta, hasta 20 s: el error llega antes del corte.
+LOCK_TIMEOUT_MS = 5_000
+STATEMENT_TIMEOUT_MS = 20_000
+
+# Como FIJAR_TENANT: SET LOCAL, solo para esta transaccion.
+FIJAR_TOPES = text(
+    "SELECT set_config('lock_timeout', :lock, true), "
+    "set_config('statement_timeout', :consulta, true)"
+)
+
 
 @lru_cache(maxsize=1)
 def obtener_motor() -> Engine:
@@ -59,6 +73,10 @@ def sesion_de_tenant(tenant_id: UUID) -> Iterator[Session]:
     """
     with Session(obtener_motor()) as sesion, sesion.begin():
         sesion.execute(FIJAR_TENANT, {"tenant_id": str(tenant_id)})
+        sesion.execute(
+            FIJAR_TOPES,
+            {"lock": str(LOCK_TIMEOUT_MS), "consulta": str(STATEMENT_TIMEOUT_MS)},
+        )
         yield sesion
 
 
