@@ -187,8 +187,8 @@ resource "aws_s3_bucket_policy" "documentos" {
 # Permisos de la Lambda de API
 #
 # Una URL prefirmada hereda los permisos de quien la firma, asi que el rol
-# necesita el permiso aunque el objeto lo mueva el navegador. Acotado a los
-# dos prefijos de negocio: nada de s3:* sobre el bucket entero.
+# necesita el permiso aunque el objeto lo mueva el navegador. Solo el prefijo
+# documentos/, el unico que firma la API (#102): ingesta/ es del worker.
 ###############################################################################
 
 data "aws_iam_policy_document" "lambda_documentos" {
@@ -203,7 +203,6 @@ data "aws_iam_policy_document" "lambda_documentos" {
 
     resources = [
       "${aws_s3_bucket.documentos.arn}/documentos/*",
-      "${aws_s3_bucket.documentos.arn}/ingesta/*",
     ]
   }
 }

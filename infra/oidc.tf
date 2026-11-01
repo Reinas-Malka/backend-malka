@@ -18,6 +18,7 @@ locals {
   # y la condicion StringEquals sin los IDs nunca matchea (STS responde
   # "Not authorized to perform sts:AssumeRoleWithWebIdentity").
   github_repositorio_sub = "Reinas-Malka@329292836/backend-malka@1375132426"
+  github_frontend_sub    = "Reinas-Malka@329292836/frontend-malka@1377758180"
   github_rama_deploy     = "main"
 }
 
@@ -69,13 +70,14 @@ data "aws_iam_policy_document" "github_confianza" {
 
     # La condicion que da la seguridad: el emisor es el mismo para TODOS los
     # repositorios de GitHub; sin esto, cualquiera podria asumir el rol.
-    # Dos subs: el backend (imagen + lambdas) y el frontend (deploy del SPA).
+    # Solo el backend: el frontend tiene su propio rol (abajo), asi un
+    # paquete npm comprometido en su build no puede tocar las Lambdas ni
+    # invocar las migraciones (que usan la credencial duenia de la base).
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
         "repo:${local.github_repositorio_sub}:ref:refs/heads/${local.github_rama_deploy}",
-        "repo:Reinas-Malka@329292836/frontend-malka@1377758180:ref:refs/heads/main",
       ]
     }
   }
@@ -147,8 +149,57 @@ data "aws_iam_policy_document" "github_deploy" {
     resources = [aws_lambda_function.migraciones.arn]
   }
 
-  # El deploy del frontend (ADR 0011): publica el build e invalida la
-  # cache de CloudFront para no servir el bundle viejo.
+}
+
+resource "aws_iam_role_policy" "github_deploy" {
+  name   = "${local.name}-github-deploy"
+  role   = aws_iam_role.github_actions.id
+  policy = data.aws_iam_policy_document.github_deploy.json
+}
+
+###############################################################################
+# Rol del deploy del frontend (ADR 0011): publicar el build e invalidar la
+# cache. Nada del backend.
+###############################################################################
+
+data "aws_iam_policy_document" "github_confianza_frontend" {
+  statement {
+    sid     = "SoloMainDelFrontend"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = [
+        "repo:${local.github_frontend_sub}:ref:refs/heads/${local.github_rama_deploy}",
+      ]
+    }
+  }
+}
+
+resource "aws_iam_role" "github_actions_frontend" {
+  name                 = "${local.name}-github-actions-frontend"
+  description          = "Rol del deploy del frontend de GitHub Actions (OIDC, solo main)"
+  assume_role_policy   = data.aws_iam_policy_document.github_confianza_frontend.json
+  max_session_duration = 3600
+
+  tags = {
+    Name = "${local.name}-github-actions-frontend"
+  }
+}
+
+data "aws_iam_policy_document" "github_deploy_frontend" {
   statement {
     sid = "PublicarFrontend"
     actions = [
@@ -162,17 +213,18 @@ data "aws_iam_policy_document" "github_deploy" {
     ]
   }
 
+  # Solo la distribucion del frontend, no cualquiera de la cuenta.
   statement {
     sid       = "InvalidarCloudFront"
     actions   = ["cloudfront:CreateInvalidation"]
-    resources = ["*"]
+    resources = [aws_cloudfront_distribution.frontend.arn]
   }
 }
 
-resource "aws_iam_role_policy" "github_deploy" {
-  name   = "${local.name}-github-deploy"
-  role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.github_deploy.json
+resource "aws_iam_role_policy" "github_deploy_frontend" {
+  name   = "${local.name}-github-deploy-frontend"
+  role   = aws_iam_role.github_actions_frontend.id
+  policy = data.aws_iam_policy_document.github_deploy_frontend.json
 }
 
 ###############################################################################
@@ -180,6 +232,11 @@ resource "aws_iam_role_policy" "github_deploy" {
 ###############################################################################
 
 output "github_actions_role_arn" {
-  description = "ARN del rol que asume el workflow de deploy; va en el secret AWS_ROLE_ARN"
+  description = "ARN del rol que asume el workflow de deploy del backend; va en el secret AWS_ROLE_ARN"
   value       = aws_iam_role.github_actions.arn
+}
+
+output "github_actions_frontend_role_arn" {
+  description = "ARN del rol del deploy del frontend; va en role-to-assume de deploy.yml de frontend-malka"
+  value       = aws_iam_role.github_actions_frontend.arn
 }
