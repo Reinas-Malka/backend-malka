@@ -128,9 +128,9 @@ resource "aws_vpc_endpoint" "s3" {
 # se duplica y para este ambiente la resiliencia multi-AZ no justifica el
 # doble.
 #
-# El de bedrock-runtime ademas queda apagado hasta que el worker haga su
-# primera llamada real (#40): hoy nadie lo usa. El de SQS si: lo necesita
-# la API para SendMessage (el polling del event source mapping corre en la
+# El de bedrock-runtime lo usa el worker para el borrador con IA (#40): sin
+# NAT es su unica ruta a Bedrock. El de SQS lo necesita la API para
+# SendMessage (el polling del event source mapping corre en la
 # infraestructura de Lambda, fuera de esta VPC).
 locals {
   endpoints_interfaz = concat(

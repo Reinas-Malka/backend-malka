@@ -111,6 +111,14 @@ resource "aws_iam_role_policy" "worker_consume_sqs" {
 
 # Invocacion de Bedrock, lo que quedo pendiente del #39: el perfil
 # us. enruta a los modelos de fundacion, por eso se permiten los dos ARN.
+# El worker lee la credencial del rol de aplicacion (la misma politica que
+# la API, rds_rol_app.tf): solo GetSecretValue sobre ese secreto.
+resource "aws_iam_role_policy" "worker_secreto_app" {
+  name   = "${local.name}-worker-secreto-app"
+  role   = aws_iam_role.lambda_worker.id
+  policy = data.aws_iam_policy_document.lambda_secreto_app.json
+}
+
 resource "aws_iam_role_policy" "worker_bedrock" {
   name = "${local.name}-worker-bedrock"
   role = aws_iam_role.lambda_worker.id
@@ -163,6 +171,9 @@ resource "aws_lambda_function" "worker" {
     variables = {
       APP_ENVIRONMENT = var.environment
       APP_VERSION     = var.image_tag
+      # El borrador con IA (#40) lee el pedido y guarda el resultado con el
+      # rol de aplicacion, igual que la API: RLS sigue aplicando.
+      DB_SECRET_NAME = aws_secretsmanager_secret.db_app.name
     }
   }
 
