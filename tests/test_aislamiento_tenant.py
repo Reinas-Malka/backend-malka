@@ -46,6 +46,7 @@ ORDEN = (
     "documento",
     "comprobante",
     "llamada_ia",
+    "borrador",
     "idempotencia",
 )
 
@@ -177,6 +178,12 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
     insertar(
         "llamada_ia",
         "INSERT INTO llamada_ia (motivo) VALUES ('borrador') RETURNING id",
+    )
+    insertar(
+        "borrador",
+        "INSERT INTO borrador (pedido_id, solicitado_por) "
+        "VALUES (:pedido, 'sub-de-prueba') RETURNING id",
+        pedido=filas["pedido"],
     )
     # La misma clave en los dos criaderos: es unica por tenant, no global (#25).
     insertar(

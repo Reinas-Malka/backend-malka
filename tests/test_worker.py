@@ -9,6 +9,7 @@ import logging
 
 import pytest
 
+from app import worker
 from app.worker import handler
 
 
@@ -42,3 +43,23 @@ def test_el_mensaje_veneno_sigues_yendo_a_la_dlq(
             handler(_evento("veneno"), None)
 
     assert "veneno" not in caplog.text
+
+
+def test_un_mensaje_de_borrador_se_genera_con_el_modelo(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#40: el worker resuelve el borrador; el log sigue sin el cuerpo."""
+    llamados: list[tuple[dict, object]] = []
+    modelo = object()
+    monkeypatch.setattr(
+        worker.generacion, "procesar", lambda m, c: llamados.append((m, c))
+    )
+    monkeypatch.setattr(worker, "cliente_ia", lambda: modelo)
+    cuerpo = '{"borrador_id": "b-1", "tenant_id": "t-1"}'
+
+    with caplog.at_level(logging.INFO):
+        respuesta = handler(_evento(cuerpo), None)
+
+    assert respuesta == {"mensajes_procesados": 1}
+    assert llamados == [({"borrador_id": "b-1", "tenant_id": "t-1"}, modelo)]
+    assert "b-1" not in caplog.text

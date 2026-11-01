@@ -17,6 +17,7 @@ from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
 from app.routers import (
     bancos,
+    borradores,
     clientes,
     comprobantes,
     disponibilidad,
@@ -58,6 +59,7 @@ app.include_router(tandas.router)
 app.include_router(embarques.router)
 app.include_router(documentos.router)
 app.include_router(comprobantes.router)
+app.include_router(borradores.router)
 
 
 class Salud(BaseModel):
