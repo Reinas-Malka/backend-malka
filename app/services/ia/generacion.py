@@ -17,8 +17,7 @@ import importlib
 import json
 import logging
 import os
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -33,6 +32,11 @@ from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del
 from app.services.ia import limites
 from app.services.ia.borrador import BorradorValidado, MetricasIA, generar_borrador
 from app.services.ia.cliente import ClienteIA, RespuestaIA
+from app.services.ia.contexto import (
+    LineaParaBorrador,
+    PedidoParaBorrador,
+    armar_contexto,
+)
 
 logger = logging.getLogger("malka")
 
@@ -120,8 +124,9 @@ LEER_PEDIDO = text(
     "JOIN cliente c ON c.id = p.cliente_id WHERE b.id = :id"
 )
 
+# Sin precio_unitario: los importes no van al modelo (ver contexto.py).
 LEER_LINEAS = text(
-    "SELECT pi.cantidad, pi.precio_unitario, iv.nombre AS item, r.nombre AS raza "
+    "SELECT pi.cantidad, iv.nombre AS item, r.nombre AS raza "
     "FROM borrador b JOIN pedido_item pi ON pi.pedido_id = b.pedido_id "
     "JOIN item_vendible iv ON iv.id = pi.item_vendible_id "
     "JOIN raza r ON r.id = pi.raza_id WHERE b.id = :id ORDER BY pi.numero_linea"
@@ -206,31 +211,25 @@ def listar(
 # --- worker ---
 
 
-def _numero(valor: Decimal) -> str:
-    return format(valor.normalize(), "f")
-
-
 def _contexto(sesion: Session, borrador_id: UUID) -> str:
     pedido = sesion.execute(LEER_PEDIDO, {"id": borrador_id}).one()
     lineas = sesion.execute(LEER_LINEAS, {"id": borrador_id}).all()
-    fecha: date = pedido.fecha_entrega_solicitada
-    renglones = [
-        f"Cliente: {pedido.cliente} ({pedido.pais})",
-        f"Moneda del pedido: {pedido.moneda}",
-        f"Entrega solicitada: {fecha.isoformat()}",
-    ]
-    if pedido.destino_pais:
-        renglones.append(
-            f"Exportacion a {pedido.destino_pais}"
-            + (f", incoterm {pedido.incoterm}" if pedido.incoterm else "")
+    return armar_contexto(
+        PedidoParaBorrador(
+            cliente=pedido.cliente,
+            pais_cliente=pedido.pais,
+            moneda=pedido.moneda,
+            fecha_entrega=pedido.fecha_entrega_solicitada,
+            destino_pais=pedido.destino_pais,
+            incoterm=pedido.incoterm,
+            lineas=[
+                LineaParaBorrador(
+                    cantidad=linea.cantidad, item=linea.item, raza=linea.raza
+                )
+                for linea in lineas
+            ],
         )
-    renglones.append("Lineas:")
-    renglones += [
-        f"- {linea.cantidad} x {linea.item}, raza {linea.raza}, a "
-        f"{_numero(linea.precio_unitario)} {pedido.moneda} cada una"
-        for linea in lineas
-    ]
-    return "\n".join(renglones)
+    )
 
 
 def _resolver(

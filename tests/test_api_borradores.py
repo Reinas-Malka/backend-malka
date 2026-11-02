@@ -311,14 +311,24 @@ def test_el_worker_deja_el_borrador_listo_con_sus_metricas(
     leido = ver(api, datos, borrador["id"])
     assert leido["estado"] == "borrador"
     assert leido["contenido"]["encabezado"] == "Remito de venta"
-    assert leido["version_prompt"] == "borrador_v2"
+    assert leido["version_prompt"] == "borrador_v3"
     assert leido["motivo_rechazo"] is None
     # El contexto sale de la base (el modelo no descubre datos) y va
     # delimitado como datos.
     [mensaje] = modelo.mensajes
     assert mensaje.startswith("<datos>")
-    for dato in ("Apicola del Sur", "Carniola", "20", "Reina fecundada"):
+    for dato in (
+        "Documento: Nota de venta",
+        "Vendedor: el criadero",
+        "solo reinas",
+        "Comprador: Apicola del Sur, país AR",
+        "Tipo de venta: nacional",
+        "- 20 reinas Carniola, ítem Reina fecundada",
+        "Fecha de entrega solicitada: 20 de noviembre de 2026 (2026-11-20)",
+    ):
         assert dato in mensaje
+    # El precio de la linea (35000.50) no llega al modelo.
+    assert "35000" not in mensaje
 
 
 def test_el_worker_anota_los_tokens_en_el_limite_de_ia(

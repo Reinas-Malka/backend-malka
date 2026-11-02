@@ -9,6 +9,7 @@ import pytest
 
 from app.services.ia.borrador import (
     CAMPOS_PROHIBIDOS,
+    MAX_CUERPO,
     PROMPT_VERSION,
     SalidaInvalida,
     generar_borrador,
@@ -121,7 +122,7 @@ def test_salida_sin_json_levanta_error_claro() -> None:
         validar_salida("perdi el json")
 
 
-def test_el_prompt_v1_existe_y_nombra_los_campos_fiscales() -> None:
+def test_el_prompt_vigente_existe_y_nombra_los_campos_fiscales() -> None:
     prompt = cargar_prompt(PROMPT_VERSION)
 
     for campo in CAMPOS_PROHIBIDOS:
@@ -179,7 +180,7 @@ def test_acepta_prosa_normal_y_numeros_que_vienen_del_contexto(cuerpo: str) -> N
     "texto",
     [
         pytest.param(_salida("", encabezado=""), id="vacio"),
-        pytest.param(_salida("x" * 5000), id="cuerpo_enorme"),
+        pytest.param(_salida("x" * (MAX_CUERPO + 1)), id="cuerpo_enorme"),
         pytest.param(
             json.dumps({"encabezado": "X", "cuerpo": "Y", "notas": "", "cbu": "0"}),
             id="campo_de_mas",

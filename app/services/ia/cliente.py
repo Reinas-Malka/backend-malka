@@ -22,10 +22,11 @@ MODELO = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # Temperatura baja: el borrador tiene que ser reproducible, no creativo.
 TEMPERATURA = 0.0
 
-# Tope de tokens de salida por llamada (#45): un borrador ronda los 1000; el
-# tope corta una respuesta desbocada antes de que cueste. Los topes por
-# criadero estan en app/services/ia/limites.py.
-MAX_TOKENS_SALIDA = 1500
+# Tope de tokens de salida por llamada (#45): un borrador v3 ronda los 1500
+# (cuerpo de hasta 6000 caracteres, mas encabezado y notas); el tope deja
+# margen para el JSON y corta una respuesta desbocada antes de que cueste.
+# Los topes por criadero estan en app/services/ia/limites.py.
+MAX_TOKENS_SALIDA = 3000
 
 
 @dataclass(frozen=True)
