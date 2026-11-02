@@ -22,7 +22,7 @@ La cría de reinas es una producción encadenada y a contrarreloj: cada tanda pa
 
 Malka Suite unifica en un solo sistema:
 
-- **Producción y trazabilidad**: el ciclo de cada celda (de la tanda al banco), con % de fecundación y de extravío por tanda y por raza, material consumido y ocupación de parques y bancos.
+- **Producción y trazabilidad**: el ciclo de cada celda (de la tanda al banco), con % de cosecha y de pérdida en el parque por tanda y por raza, material consumido y ocupación de parques y bancos.
 - **Ventas nacionales y de exportación**: pedidos y reservas que se descuentan de la disponibilidad real de la producción.
 - **Agente de facturación con IA**: redacta borradores de facturas, remitos y documentación aduanera que una persona revisa y aprueba antes de emitir.
 
@@ -158,6 +158,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | GET | `/api/v1/tandas` | Tandas de la más nueva a la más vieja por `fecha_traslarve`, paginadas, con `celdas` y `celdas_por_estado` (contadas al leer). Filtros opcionales `?raza_id=`, `?desde=` y `?hasta=` (fechas de traslarve, inclusive). Todos los roles. |
 | GET | `/api/v1/tandas/{id}` | Una tanda con sus celdas por estado y dónde están, contado al leer: `nucleos` (los núcleos con celdas de la tanda en el parque, con `fila`, `posicion` y `celdas`; vacío después de la cosecha) y `bancos` (los bancos con reinas cosechadas de la tanda, con `identificador` y `reinas`). Las cosechadas sin banco son `celdas_por_estado.enjaulada` menos la suma de `bancos`. El listado no trae estos dos campos. 404 `tanda_no_encontrada` si no existe o es de otro criadero. Todos los roles. |
 | POST | `/api/v1/tandas/{id}/operaciones` | Operaciones por lote sobre la tanda (#28); el campo `accion` elige cuál. `descartar` (`cantidad`, `fecha`): trasladadas → `descartada`, sin núcleo. `introducir` (`parque_id`, `cantidad`, `fecha`): el sistema reparte parejo entre los núcleos activos del parque, primero los menos ocupados y en orden de fila y posición, sin tope por núcleo, y devuelve el `reparto`. `cosechar` (`cantidad`, `fecha`, una sola vez por tanda): las cosechadas pasan a `enjaulada` (suman stock para vender) y el resto de las introducidas a `descartada` con núcleo; devuelve `descartadas_en_cosecha`. `pasar_a_banco` (`banco_id`, `cantidad`): enjauladas sin banco → banco, con control de capacidad. Fechas: días calendario, no futuras ni anteriores al traslarve (o a la última introducción, para cosechar): 422 `fecha_anterior`. 409 `cantidad_excedida`, `tanda_cosechada`, `transicion_invalida`, `parque_sin_nucleos`, `parque_inactivo`, `banco_lleno` (con cuántas caben) o `banco_inactivo`; 404 si la tanda, el parque o el banco no existen o son de otro criadero. Roles `admin` y `produccion`. Acepta `Idempotency-Key`. |
+| GET | `/api/v1/kpis/produccion` | KPIs de producción calculados desde las celdas (#31): `introducidas`, `cosechadas` (`enjaulada` + `despachada`), `perdidas` (`descartada` con núcleo), `en_parque`, `porcentaje_cosecha` y `porcentaje_perdida` (con un decimal; `null` si no hay introducidas). `?agrupar=tanda` (por defecto, de la más nueva a la más vieja) o `?agrupar=raza` (suma las celdas de todas sus tandas). Período opcional `?desde=` y `?hasta=` por fecha de traslarve, inclusive: 422 `periodo_invalido` si termina antes de empezar. Todos los roles. |
 
 En los datos de producción leen todos los roles y escriben `admin` y `produccion`. Todos los POST aceptan `Idempotency-Key`.
 
@@ -259,6 +260,16 @@ def crear_tanda(
 ) -> JSONResponse:
     return responder_una_vez(sesion, pedido, lambda: repositorio_tandas.crear(sesion, datos))
 ```
+### KPIs de producción
+
+`GET /api/v1/kpis/produccion` cuenta las celdas al leer (#31, `docs/dominio.md`, KPIs del 23/10). Nada se guarda. El denominador es siempre la cantidad de celdas **introducidas** al núcleo (las que tienen `fecha_introduccion`, se hayan cosechado, descartado o sigan en el parque):
+
+- **% de cosecha** = cosechadas (`enjaulada` + `despachada`) / introducidas. Es el % de fecundación del dominio: una reina cosechada es una reina fecundada.
+- **% de pérdida en el parque** = descartadas con núcleo / introducidas.
+
+Las descartadas sin núcleo (antes de introducir) no entran en ningún %: solo cierran la fila. Sin introducidas no hay base y los % vienen en `null`. Por raza se suman las celdas de sus tandas y después se divide: no es el promedio de los % de cada tanda. Una tanda en curso tiene celdas `en_parque`, así que cosecha + pérdida todavía no llega a 100. No hay KPIs por madre (16/10); fecundadas / nacidas y el % de extravío quedan fuera de la fase 1 porque nacimiento y extravío no se cargan.
+
+Ejemplo: 120 introducidas, 95 cosechadas y 25 descartadas dan 79,2 % de cosecha y 20,8 % de pérdida.
 
 ### Pedidos
 

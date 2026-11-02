@@ -24,6 +24,7 @@ from app.routers import (
     documentos,
     embarques,
     items_vendibles,
+    kpis,
     madres,
     materiales,
     nucleos,
@@ -56,6 +57,7 @@ app.include_router(nucleos.router)
 app.include_router(materiales.router)
 app.include_router(items_vendibles.router)
 app.include_router(tandas.router)
+app.include_router(kpis.router)
 app.include_router(embarques.router)
 app.include_router(documentos.router)
 app.include_router(comprobantes.router)
