@@ -761,10 +761,10 @@ El motivo de tener dos repositorios está documentado en [`docs/adr/0004-dos-rep
 
 - **Por minuto** (`IA_LLAMADAS_POR_MINUTO`, 10) y **por día** de Argentina (`IA_LLAMADAS_POR_DIA`, 200), contados por criadero en la tabla `llamada_ia` (migración 0015, con RLS).
 - Al pasarse: **429** `limite_ia_por_minuto` o `limite_ia_diario`, con `Retry-After` (60 s, o los segundos hasta la medianoche) y el `tope` en `details`.
-- **Tokens de salida por llamada**: `maxTokens` 1500 en cada `converse`.
+- **Tokens de salida por llamada**: `maxTokens` 3000 en cada `converse` (el borrador v3 ronda 1500).
 - Cada llamada se reserva antes de hacerla (`reservar_llamada`, en la misma transacción del pedido: si algo falla, no cuenta) y se le anotan los tokens después (`registrar_consumo`).
 - **Métrica por criadero** en CloudWatch, namespace `MalkaSuite/IA`, dimensión `tenant_id`: `Llamadas`, `TokensEntrada` y `TokensSalida` (Embedded Metric Format, sin llamar a la API de CloudWatch).
-- Con los valores por defecto, el gasto máximo ronda 1,60 USD diarios por criadero.
+- Con los valores por defecto, el gasto máximo ronda 2,10 USD diarios por criadero.
 
 ## Costo fijo de infraestructura
 

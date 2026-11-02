@@ -48,9 +48,9 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Por defecto: un borrador ronda 3000 tokens de entrada y 1000 de salida, unos
-# 0,008 USD con Haiku 4.5 (README, "IA: modelo y costos"). 200 por dia son
-# como mucho ~1,60 USD diarios por criadero.
+# Por defecto: un borrador ronda 3000 tokens de entrada y 1500 de salida, unos
+# 0,011 USD con Haiku 4.5 (README, "IA: modelo y costos"). 200 por dia son
+# como mucho ~2,10 USD diarios por criadero.
 LLAMADAS_POR_MINUTO = 10
 LLAMADAS_POR_DIA = 200
 SEGUNDOS_POR_MINUTO = 60

@@ -24,7 +24,15 @@ logger = logging.getLogger("malka")
 
 # v2 (29/10): el contexto va entre <datos> y no se obedece, y no se escriben
 # montos ni numeros que no esten en los datos.
-PROMPT_VERSION = "borrador_v2"
+# v3 (02/11): Nota de venta o Proforma de exportacion con secciones (partes,
+# objeto, condiciones de entrega, cierre); deja claro que se venden reinas.
+PROMPT_VERSION = "borrador_v3"
+
+# Largos maximos de la salida. El cuerpo v3 lleva cuatro secciones: 6000
+# caracteres son unos 1500 tokens, dentro de MAX_TOKENS_SALIDA (cliente.py).
+MAX_ENCABEZADO = 200
+MAX_CUERPO = 6000
+MAX_NOTAS = 1000
 
 # Campos fiscales que el modelo nunca escribe: se transcriben del comprobante
 # que emite ARCA. El prompt los nombra; el filtro de abajo busca sus VALORES,
@@ -64,9 +72,9 @@ class BorradorValidado(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    encabezado: str = Field(min_length=1, max_length=200)
-    cuerpo: str = Field(min_length=1, max_length=4000)
-    notas: str = Field(default="", max_length=1000)
+    encabezado: str = Field(min_length=1, max_length=MAX_ENCABEZADO)
+    cuerpo: str = Field(min_length=1, max_length=MAX_CUERPO)
+    notas: str = Field(default="", max_length=MAX_NOTAS)
 
 
 @dataclass(frozen=True)
@@ -164,7 +172,7 @@ def validar_salida(texto: str, contexto: str = "") -> BorradorValidado:
 
 
 def _como_datos(contexto: str) -> str:
-    """El contexto delimitado: el prompt v2 dice que es dato, no instruccion.
+    """El contexto delimitado: el prompt dice que es dato, no instruccion.
 
     Se saca cualquier etiqueta <datos> que venga adentro, asi un nombre de
     cliente no puede cerrar el bloque y escribir instrucciones afuera.
