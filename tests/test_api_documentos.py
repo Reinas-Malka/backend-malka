@@ -175,6 +175,32 @@ def test_cualquier_rol_descarga_lo_de_su_criadero(
     assert entorno.llamadas[-1]["metodo"] == "get_object"
 
 
+@pytest.mark.parametrize(
+    ("params", "disposicion"),
+    [
+        pytest.param({}, "attachment", id="por_defecto_se_baja"),
+        pytest.param({"en_linea": "true"}, "inline", id="en_linea_se_muestra"),
+    ],
+)
+def test_la_descarga_se_baja_o_se_muestra_en_el_navegador(
+    api: TestClient,
+    criaderos: tuple[uuid.UUID, uuid.UUID],
+    entorno: FirmadorFalso,
+    params: dict[str, str],
+    disposicion: str,
+) -> None:
+    tenant, _ = criaderos
+    clave = subir(api, tenant).json()["clave"]
+
+    respuesta = api.get(
+        f"{URL}/descarga", params={"clave": clave, **params}, headers=como(tenant)
+    )
+
+    assert respuesta.status_code == 200, respuesta.json()
+    firmado = entorno.llamadas[-1]["params"]["ResponseContentDisposition"]
+    assert firmado.startswith(f"{disposicion}; filename=")
+
+
 @pytest.mark.parametrize("rol", ["produccion", "lectura"])
 def test_solo_admin_y_ventas_suben(
     api: TestClient, criaderos: tuple[uuid.UUID, uuid.UUID], rol: str
