@@ -87,6 +87,24 @@ def test_la_descarga_baja_con_el_nombre_saneado(
     )
 
 
+def test_en_linea_el_navegador_lo_muestra_en_vez_de_bajarlo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "Abrir" en el front: el PDF se ve en la pestaña, con el mismo nombre."""
+    monkeypatch.setenv("BUCKET_DOCUMENTOS", "bucket-de-prueba")
+    firmador = FirmadorFalso()
+
+    almacenamiento.firmar_descarga(
+        firmador, "documentos/t/x.pdf", "Factura.pdf", en_linea=True
+    )
+
+    [llamada] = firmador.llamadas
+    assert (
+        llamada["params"]["ResponseContentDisposition"]
+        == 'inline; filename="Factura.pdf"'
+    )
+
+
 def test_sin_bucket_configurado_es_503(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BUCKET_DOCUMENTOS", raising=False)
 

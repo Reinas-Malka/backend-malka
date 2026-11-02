@@ -53,6 +53,8 @@ def preparar_subida(
 @router.get("/descarga", response_model=DescargaPreparada)
 def preparar_descarga(
     clave: str = Query(min_length=1, max_length=300),
+    # true: el navegador lo muestra en la pestaña en vez de bajarlo.
+    en_linea: bool = False,
     sesion: Session = Depends(obtener_sesion),
     firmador: Firmador = Depends(obtener_firmador),
 ) -> DescargaPreparada:
@@ -60,6 +62,8 @@ def preparar_descarga(
     # conocer la key de otro no alcanza para bajarla.
     nombre = repositorio_documentos.nombre_de(sesion, clave)
     return DescargaPreparada(
-        url_descarga=almacenamiento.firmar_descarga(firmador, clave, nombre),
+        url_descarga=almacenamiento.firmar_descarga(
+            firmador, clave, nombre, en_linea=en_linea
+        ),
         expira_en_segundos=almacenamiento.SEGUNDOS_DESCARGA,
     )

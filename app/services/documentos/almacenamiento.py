@@ -109,15 +109,22 @@ def firmar_subida(firmador: Firmador, clave: str, tipo_contenido: str) -> str:
     )
 
 
-def firmar_descarga(firmador: Firmador, clave: str, nombre: str) -> str:
-    """URL de GET que baja el archivo con su nombre original."""
+def firmar_descarga(
+    firmador: Firmador, clave: str, nombre: str, *, en_linea: bool = False
+) -> str:
+    """URL de GET con el nombre original del archivo.
+
+    Por defecto el navegador lo baja (attachment); en_linea lo muestra en la
+    pestaña (inline), para "Abrir" un PDF sin descargarlo.
+    """
+    disposicion = "inline" if en_linea else "attachment"
     return firmador.generate_presigned_url(
         ClientMethod="get_object",
         Params={
             "Bucket": bucket_documentos(),
             "Key": clave,
             "ResponseContentDisposition": (
-                f'attachment; filename="{nombre_para_clave(nombre)}"'
+                f'{disposicion}; filename="{nombre_para_clave(nombre)}"'
             ),
         },
         ExpiresIn=SEGUNDOS_DESCARGA,
