@@ -468,7 +468,7 @@ El frontend solo necesita `VITE_API_BASE_URL` apuntando a la URL de la API. **No
 
 | Variable | Descripción | Valor por defecto |
 |---|---|---|
-| `APP_ENVIRONMENT` | Ambiente en el que corre la API | `dev` |
+| `APP_ENVIRONMENT` | Ambiente en el que corre la API. En la Lambda de migraciones decide si la 0006 siembra los criaderos demo: solo con `dev` (ver [Criaderos demo](#criaderos-demo-solo-en-dev)) | `dev` en la API; sin valor, la migración no siembra |
 | `APP_VERSION` | Versión que informa el endpoint `/health` | `0.1.0` |
 | `COLA_DOCUMENTOS_URL` | URL de la cola SQS de documentos (la carga Terraform) | — |
 | `COLA_INGESTA_URL` | URL de la cola SQS de ingesta (la carga Terraform) | — |
@@ -515,6 +515,16 @@ alembic upgrade head      # aplica todas las migraciones
 alembic current           # muestra la versión actual
 alembic downgrade -1      # deshace la última
 ```
+
+### Criaderos demo (solo en dev)
+
+La migración 0006 carga los tres criaderos que usan los usuarios de prueba de Cognito (`infra/scripts/seed_cognito_users.sh`) **solo si `APP_ENVIRONMENT` vale `dev`** (#104). Sin la variable, o con cualquier otro valor, no siembra nada: falla cerrado, para que una base de producción nunca quede con criaderos de UUID y CUIT fijos. En AWS la Lambda de migraciones recibe la variable de Terraform (`var.environment`). En local, para tenerlos:
+
+```bash
+APP_ENVIRONMENT=dev alembic upgrade head
+```
+
+Si la base local ya pasó por la 0006 sin la variable, los criaderos no aparecen solos: o se cargan a mano, o se baja a `0005` y se vuelve a subir con la variable (eso borra las tablas de las migraciones posteriores, con sus datos).
 
 ### En AWS
 

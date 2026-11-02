@@ -172,8 +172,13 @@ def base_de_prueba() -> Iterator[BaseDePrueba]:
             config = Config(str(RAIZ / "alembic.ini"))
             config.attributes["configurar_logs"] = False
             # Ida, vuelta e ida: si algun downgrade esta roto, falla aca.
+            # La ida y la vuelta van como dev (con la semilla de la 0006);
+            # la base que usan los tests queda como prod, sin criaderos demo
+            # (#104, lo verifica test_semilla_tenants.py).
+            parche.setenv("APP_ENVIRONMENT", "dev")
             command.upgrade(config, "head")
             command.downgrade(config, "base")
+            parche.setenv("APP_ENVIRONMENT", "prod")
             command.upgrade(config, "head")
         obtener_url_base_de_datos.cache_clear()
 
