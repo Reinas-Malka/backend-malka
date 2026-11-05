@@ -719,6 +719,291 @@ Workflow de lint, build y tests (F#20) y ajustes de configuración de Vitest (F#
 
 ---
 
+## 22. README del backend — #47 (28/09)
+
+**Problema abordado**
+Completar el README para que alguien que llega al repo entienda de qué va el
+proyecto, cómo está armado y cómo se opera (documentación del Checkpoint 1).
+
+**Prompt y herramienta**
+Claude Code, con el repo y la arquitectura definida como
+contexto. 
+
+**Código o arquitectura generada**
+Las secciones "De qué va el proyecto", "Observabilidad", "Estructura del
+proyecto", las variables de entorno de la API y de Terraform, las salidas útiles
+y "Problemas comunes".
+
+**Validación y corrección humana**
+La autora revisó cada sección antes de subirla. Desde entonces, cada PR de
+producción de este registro actualizó su parte del README en un commit propio
+(`docs: …`), para que no se desactualizara.
+
+---
+
+## 23. Alembic, migración inicial y Lambda de migraciones — #54, #56 (30/09)
+
+**Problema abordado**
+Versionar el esquema con Alembic, con una migración inicial que se pueda revertir
+(issue #18), y aplicar las migraciones en AWS sin abrir la base a internet
+(issue #53).
+
+**Prompt y herramienta**
+Claude Code, con las issues y la infraestructura que ya existía
+(VPC, RDS privada y Secrets Manager) como contexto.
+
+**Código o arquitectura generada**
+- #54: Alembic leyendo la URL desde la configuración de la app, la migración
+  `0001` con `tenant`, `raza`, `tanda` y `tanda_evento` con RLS, tests de la
+  configuración de conexión y la sección del README.
+- #56: `app/migrar.py`, un handler que corre `upgrade` o `downgrade` según el
+  evento; `infra/migraciones.tf`, una Lambda con **la misma imagen** que la API
+  (otro `command`) dentro de la VPC, con las credenciales del secreto de RDS; y
+  cómo correrla en el README.
+
+**Validación y corrección humana**
+- **Downgrade probado:** el DoD de la #18 pedía bajar y volver a subir la
+  migración, no solo aplicarla. Quedó como regla en el README: cada migración se
+  escribe a mano con un `downgrade` que funcione, y antes del PR se prueba
+  `alembic downgrade -1` y se vuelve a subir.
+- **La misma imagen, con un rol propio:** las migraciones que corren en AWS son
+  las del commit desplegado y llegan a RDS, que es privada, desde la VPC, sin
+  abrir la base. La Lambda tiene su propio rol porque usa la credencial del dueño
+  de las tablas, mientras que la API usa un rol sin privilegios (#19). Lee el
+  secreto por el VPC endpoint que ya existía, así que no suma costo fijo.
+- **El primer esquema no seguía el dominio:** `0001` modelaba la tanda con
+  eventos por etapa. Cuando el dominio del 04/10 y 07/10 definió la celda como
+  entidad central, se abrió la #73 para reconciliarlo y se reemplazó en #79
+  (entrada 24).
+
+---
+
+## 24. Migraciones 0003 y 0004: la celda como entidad central y los materiales — #79, #86 (07/10 a 08/10)
+
+**Problema abordado**
+Llevar el esquema al dominio confirmado por la clienta: una fila de celda por
+cúpula en lugar del modelo de etapas de la tanda (issues #26 y #73), y los
+materiales con sus movimientos y el catálogo de ítems vendibles.
+
+**Prompt y herramienta**
+Claude Code, con `docs/dominio.md` como fuente de verdad.
+
+**Código o arquitectura generada**
+- #79: la migración `0003` con `celda`, `madre`, `parque` y `nucleo` (RLS,
+  `CHECK`s y permisos mínimos del rol `malka_app`), tests de aislamiento por
+  tenant y de las reglas del esquema, y el modelo de datos del dominio
+  actualizado.
+- #86: la migración `0004` con `material`, `movimiento_material` e
+  `item_vendible`, y sus tests.
+
+**Validación y corrección humana**
+- **El núcleo colgaba del banco:** la primera versión de `0003` seguía el brief
+  original (banco → núcleo). La clienta confirmó el 07/10 que el núcleo está en
+  un **parque de fecundación** y que el banco es otra cosa (guarda reinas ya
+  cosechadas). Se corrigió en el mismo PR (`3d9d860`) y la tabla pasó a llamarse
+  `parque`, como en el dominio (`e1c11e3`). El dominio deja escrito que el error
+  "se quiso repetir": la distinción se volvió a revisar en cada PR siguiente.
+- **Lo que no es columna:** `celdas_trasladadas` es `COUNT(*)` de celdas y el
+  stock es la suma de movimientos; ninguno se guarda, como pide el dominio.
+- **Permisos sin `DELETE` (#86):** el material se da de baja lógica y un
+  movimiento no se edita ni se borra; un error se corrige con un ajuste, así el
+  stock siempre tiene historia.
+- **La alícuota no se inventó:** los valores salen del enum de `importes.py` (un
+  test verifica que la migración y el enum coincidan) y el 21 % por defecto quedó
+  marcado como "NO VERIFICADO" hasta que la clienta lo confirmó el 11/10.
+
+---
+
+## 25. CRUD de producción, paginación y capacidad del parque — #100 (13/10)
+
+**Problema abordado**
+Altas, lectura, edición y baja de razas, madres, materiales (con movimientos),
+parques, núcleos e ítems vendibles (issue #30), con el control de capacidad del
+parque de fecundación (issue #29).
+
+**Prompt y herramienta**
+Claude Code, con las dos issues, el dominio y los patrones ya
+existentes del backend (errores, idempotencia de #95, RLS).
+
+**Código o arquitectura generada**
+Paginación por cursor común (`app/paginacion.py`) y escritura común de
+repositorios (`app/services/repositorio.py`), schemas, seis repositorios, los
+endpoints con `Idempotency-Key`, la advertencia `parque_al_limite`, tests de punta
+a punta (incluido el aislamiento entre criaderos) y la sección del README.
+
+**Validación y corrección humana**
+- **Una condición de carrera en la capacidad del parque:** la primera versión
+  bloqueaba el parque y contaba sus núcleos en la misma consulta. Con `READ
+  COMMITTED`, ese conteo no ve los núcleos que otra alta confirma mientras se
+  espera el lock, así que dos altas simultáneas podían pasar la capacidad. Se
+  separó en dos pasos (primero `FOR UPDATE`, después contar en otra consulta) y se
+  agregó `test_concurrencia_parque.py`, que lo demuestra (`bd08f92`). Ese patrón
+  es el que después reusaron #122 (material) y #128 (parque y banco).
+- La paginación por cursor de este PR es la que tomó después el frontend
+  (entrada 20).
+
+---
+
+## 26. Alta de tanda y el "hoy" de Argentina — #122, #125 (19/10 a 23/10)
+
+**Problema abordado**
+Dar de alta una tanda por cuadros de madera (1 a 3), con raza obligatoria, madre
+opcional y la ubicación en la continuadora, creando una celda por cúpula y
+descontando las cúpulas del material en la misma transacción (issue #27). Después,
+que las validaciones de fecha usen el día de Argentina y no el de UTC (#124).
+
+**Prompt y herramienta**
+Claude Code.
+
+**Código o arquitectura generada**
+- #122: `CUPULAS_POR_CUADRO` en un solo lugar, schemas del alta, repositorio con
+  la tanda, las celdas en un solo `INSERT … generate_series` y el movimiento de
+  consumo, endpoints `POST` y `GET` de tandas, tests sin base y de punta a punta,
+  y la sección del README.
+- #125: `app/fechas.py` con `hoy()` en `America/Argentina/Buenos_Aires` (y
+  `tzdata`, para que `zoneinfo` funcione en Lambda), las validaciones de tandas y
+  movimientos contra ese día y tests a las 22 h de Argentina, cuando UTC ya es el
+  día siguiente.
+
+**Validación y corrección humana**
+- **La regla del domingo ida y vuelta:** la issue actualizada dejó de mencionar el
+  domingo y se sacó; Felipe pidió mantenerla solo para el traslarve, con la
+  excepción de la carga retroactiva, y se restauró. Se corrigió además un
+  comentario que la aplicaba a las fechas biológicas, que son días calendario.
+- **`material_id` en el alta:** se confirmó con Felipe antes de mergear, porque el
+  dominio no decía de qué material se descuentan las cúpulas.
+- **El review de #122 detectó `date.today()`:** corre en UTC, así que entre las
+  21 y las 24 h de Argentina "hoy" era mañana. No bloqueó el merge: se abrió la
+  issue #124 y se resolvió en #125, que también agregó el test de concurrencia
+  que el review había marcado como opcional (dos altas simultáneas sobre el mismo
+  material, que ya estaban serializadas por el `FOR UPDATE`).
+- Al rebasar sobre un `main` nuevo chocó `app/main.py`: se tomó el de `main` y
+  se agregaron a mano las dos líneas de tandas, en vez de aceptar el de la rama.
+
+---
+
+## 27. Operaciones por lote sobre la tanda — #128 (25/10)
+
+**Problema abordado**
+Registrar lo que pasa en el campo sin operar celda por celda: descartar antes de
+introducir, introducir en un parque, cosechar y pasar a banco (issue #28, dominio
+del 23/10).
+
+**Prompt y herramienta**
+Claude Code. Antes de escribir código, la IA armó la lista de
+preguntas que la issue dejaba abiertas; la autora se las hizo a la clienta y a
+Felipe y volvió con las respuestas, que pasaron al dominio (#126).
+
+**Código o arquitectura generada**
+Un solo endpoint `POST /api/v1/tandas/{id}/operaciones` con el campo `accion` como
+discriminador, el reparto parejo entre núcleos (`repartir()`, primero los menos
+ocupados y en orden de fila y posición), el repositorio de operaciones con
+bloqueo de la tanda y después del parque o del banco, tests sin base, de punta a
+punta y de concurrencia con el banco lleno.
+
+**Validación y corrección humana**
+- **Las respuestas de la clienta cambiaron el diseño:** un núcleo es un baby nuc,
+  sin tope de celdas; el núcleo se libera al cosechar; la madurez no lleva fecha;
+  la cosecha se carga por tanda y lo no cosechado pasa a `descartada` con núcleo,
+  sin un estado nuevo; las fechas no pueden ser anteriores al paso previo.
+- **Fuera de alcance por decisión del equipo:** mover reinas de un banco a otro y
+  corregir operaciones cargadas por error. Quedaron como issues propias.
+- **Mismo patrón de concurrencia que #29:** primero `FOR UPDATE` y después contar
+  en otra consulta; el test de dos lotes simultáneos sobre un banco con lugar para
+  uno lo demuestra.
+- Se verificó que la rama mergeaba sin conflictos con la de @santigonzalezdangelo
+  (#127), que tocaba el mismo README. Quedó anotada una diferencia conocida: el
+  banco inexistente responde 404 acá, porque se reusa `repositorio_bancos` igual
+  que con el parque, y 422 en #127, que sigue la convención de pedidos para un id
+  del cuerpo que no existe.
+- **Un error de la IA que encontró otra persona:** *pasar a banco* podía ponerle
+  banco a celdas que un despacho simultáneo acababa de tomar, porque el `UPDATE`
+  no volvía a mirar el estado después del lock. Lo reprodujo y arregló Felipe en
+  #138 (entrada 12), sin cambiar la lógica ni los códigos de error.
+
+---
+
+## 28. Detalle de tanda: núcleos ocupados y bancos — #130 (25/10)
+
+**Problema abordado**
+La #9 del frontend pedía mostrar cuántas cosechadas están en banco, los núcleos
+ocupados por la tanda y los bancos donde están, y `GET /api/v1/tandas/{id}` no lo
+devolvía (issue #129).
+
+**Prompt y herramienta**
+El faltante lo encontró la IA al preparar la #9 del
+front; en vez de resolverlo en el frontend, propuso el cambio en el backend.
+
+**Código o arquitectura generada**
+`TandaDetalle` (= `TandaRespuesta` más `nucleos` y `bancos`, contados al leer),
+dos consultas en el repositorio de tandas, el `GET` del detalle con ese schema y
+9 tests de punta a punta. El listado no cambió.
+
+**Validación y corrección humana**
+- **Formato:** el mismo `GET` con un schema propio para el
+  detalle, no un endpoint aparte, y "núcleos" son solo los que todavía tienen
+  celdas en el parque (después de cosechar la lista queda vacía).
+
+---
+
+## 29. KPIs de producción en el backend — #144 (02/11)
+
+**Problema abordado**
+% de cosecha y % de pérdida en el parque por tanda y por raza, calculados desde
+las celdas con la definición del dominio del 23/10 (issue #31).
+
+**Prompt y herramienta**
+Claude Code, con la issue y la sección de KPIs del dominio.
+
+**Código o arquitectura generada**
+`GET /api/v1/kpis/produccion` con `agrupar=tanda|raza` y período por fecha de
+traslarve; la cuenta del % separada en `kpis.py` y los conteos escritos una sola
+vez (`CONTEOS`) para las dos agrupaciones; 8 tests sin base y 15 de punta a punta,
+armados con las operaciones de #128.
+
+**Validación y corrección humana**
+Decisiones que la issue no fijaba, explicadas en el PR y revisadas contra el
+dominio:
+- Sin introducidas, los % vienen en `null` y no en 0: un 0 parecería un dato.
+- Por raza se suman las celdas y después se divide; no se promedian los % de cada
+  tanda (120/95 y 30/30 da 83,3 %, el promedio daría 89,6 %). Hay un test para eso.
+- `en_parque` explica por qué, en una tanda en curso, cosecha + pérdida no llega
+  a 100.
+- Las cosechadas y las perdidas exigen `fecha_introduccion`, como el denominador,
+  así ningún % puede pasar de 100.
+- El README todavía decía "% de fecundación y de extravío": se corrigió, porque
+  el extravío salió de la fase 1.
+
+---
+
+## 30. Frontend: listado y alta de tandas por cuadros — F#42 (27/10)
+
+**Problema abordado**
+La pantalla de tandas (issue #8 del frontend): listado con edad y celdas por
+estado y alta por cuadros, usable desde el teléfono.
+
+**Prompt y herramienta**
+Claude Code, con el contrato OpenAPI de #122 y los patrones del
+frontend (`FormularioRecurso`, `DataTable`, swap simulado/real).
+
+**Código o arquitectura generada**
+`Tanda`, `TandaCrear` y `TandaCreada` pasan a ser alias del contrato; cliente de
+tandas real y simulado con la misma firma (el simulado repite las reglas del
+backend: domingo, raza y material activos, 135 celdas por cuadro, stock negativo e
+idempotencia); datos simulados con el modelo del 23/10; la pantalla y 18 tests.
+
+**Validación y corrección humana**
+- **Un test existente falló solo en Windows:** `rutas.test.tsx` esperaba 1 s a
+  cada pantalla con carga diferida; con Tandas como primera pantalla que carga el
+  formulario y el modal, en una máquina lenta no alcanzaba. Se subió a 5 s por
+  pantalla y 20 s el test, con el motivo en un comentario.
+- **No se probó contra el backend real:** los tipos salen del contrato y el
+  cliente HTTP es el mismo de las otras pantallas; el PR lo dice.
+- Al preparar la #9 apareció que el backend no devolvía los núcleos ni los bancos
+  de la tanda: eso dio lugar a #130 (entrada 28).
+
+---
+
 ## La IA dentro del producto: el borrador del documento
 
 ### Reglas
@@ -794,7 +1079,6 @@ borrador guarda con qué versión se generó.
 ### Pendiente
 
 - Probar la salida real del v3 en dev con el pedido Buckfast (#148).
-- Nombre del criadero en el borrador (#147, abierto).
 - Aprobación del borrador (backend #42, frontend #17).
 
 ---
@@ -814,20 +1098,6 @@ qué corrigió y por qué). Si no la usó, alcanza con anotarlo al lado del PR.
 - [ ] #94 — test(seguridad): aislamiento multi-tenant con RLS (09/10)
 - [ ] F#44 — feat(nav): menú y rutas según el rol del usuario (27/10)
 
-### @pilarwagnerr
-
-- [ ] #47 — docs: completa README (28/09)
-- [ ] #54 — Chore/alembic migracion inicial (30/09)
-- [ ] #56 — Infra/lambda migraciones (01/10)
-- [ ] #79 — feat(produccion): migración 0003, celda como entidad central (07/10)
-- [ ] #86 — feat(produccion): migración 0004 con materiales, movimientos e ítems vendibles (08/10)
-- [ ] #100 — feat(produccion): CRUD de razas, madres, materiales, parques, núcleos e ítems vendibles (13/10)
-- [ ] #122 — feat(produccion): alta de tanda con raza, continuadora y consumo de cúpulas (23/10)
-- [ ] #125 — fix(produccion): "hoy" con la hora de Argentina en vez de UTC (23/10)
-- [ ] #128 — feat(produccion): operaciones por lote: descartar, introducir, cosechar y pasar a banco (25/10)
-- [ ] #130 — feat(produccion): el detalle de la tanda devuelve sus núcleos ocupados y sus bancos (27/10)
-- [ ] #144 — feat(produccion): % de cosecha y % de pérdida por tanda y por raza (02/11)
-- [ ] F#42 — feat(produccion): listado y alta de tandas por cuadros (27/10)
 
 ### @santigonzalezdangelo
 
