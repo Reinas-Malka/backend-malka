@@ -140,9 +140,13 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | POST | `/api/v1/comprobantes` | Registra un comprobante que ya emitió ARCA (#108): todo se **transcribe**, nada se calcula ni se genera. `tipo` (A, B o E), `cliente_id`, `punto_venta` y `numero` (dos enteros, nunca el texto impreso `0001-00000045`), `fecha_emision` (no futura), `moneda` (ARS con A o B; USD o EUR con E), `importe`, `tipo_cambio` (solo fuera de ARS, obligatorio ahí) y `archivo_s3_key` (el PDF ya subido con `/documentos/subidas`). `cargado_por` sale del token. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 422 `cliente_inexistente`, `letra_incoherente` (exterior E, responsable inscripto A, resto B; trae la `esperada`) o `archivo_inexistente`; 409 `comprobante_duplicado` si se repite `(tipo, punto_venta, numero)`. Sin PATCH ni DELETE: lo transcripto es inmutable. |
 | GET | `/api/v1/comprobantes` | Comprobantes de la emisión más nueva a la más vieja, paginados. Filtro opcional `?cliente_id=`. Todos los roles. |
 | GET | `/api/v1/comprobantes/{id}` | Un comprobante tal como se transcribió. 404 `comprobante_no_encontrado` si no existe o es de otro criadero. Todos los roles. |
-| POST | `/api/v1/documentos/borradores` | Pide a la IA el borrador de un documento de un pedido (#40): `pedido_id`. Responde **202** con el borrador en `generando` y lo encola; el worker lo resuelve en segundos. Reserva una llamada del límite de IA (429 `limite_ia_por_minuto` o `limite_ia_diario`). Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 422 `pedido_inexistente`. |
+| POST | `/api/v1/documentos/borradores` | Pide a la IA el borrador de un documento de un pedido (#40): `pedido_id` y, opcional, `corrige_a` (un borrador **aprobado** del mismo pedido que este corrige; el aprobado no se toca). Responde **202** con el borrador en `generando` y lo encola; el worker lo resuelve en segundos. Reserva una llamada del límite de IA (429 `limite_ia_por_minuto` o `limite_ia_diario`). Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 422 `pedido_inexistente` o `correccion_invalida`. |
 | GET | `/api/v1/documentos/borradores` | Borradores del más nuevo al más viejo, paginados. Filtro opcional `?pedido_id=`. Todos los roles. |
-| GET | `/api/v1/documentos/borradores/{id}` | Un borrador: `estado` (`generando`, `borrador` o `rechazado`), `contenido` (`encabezado`, `cuerpo`, `notas`; solo en `borrador`) y `motivo_rechazo` (`salida_invalida`, `error_modelo` o `cola_no_disponible`). El front consulta hasta que sale de `generando`. 404 `borrador_no_encontrado`. Todos los roles. |
+| GET | `/api/v1/documentos/borradores/{id}` | Un borrador: `estado` (`generando`, `borrador`, `rechazado`, `aprobado` o `descartado`), `contenido` (`encabezado`, `cuerpo`, `notas`; en `borrador`, `aprobado` y `descartado`), `hash_contenido` (la versión a mandar al aprobar), `motivo_rechazo` (`salida_invalida`, `error_modelo` o `cola_no_disponible`), `motivo_descarte`, `corrige_a`, `comprobante_id`, `aprobado_por`, `aprobado_en` y `pdf_disponible`. El front consulta hasta que sale de `generando`. 404 `borrador_no_encontrado`. Todos los roles. |
+| POST | `/api/v1/documentos/borradores/{id}/aprobar` | Aprueba el borrador (#42): `hash_contenido` (obligatorio, la versión que se revisó) y `comprobante_id` opcional (un comprobante ya transcripto del cliente del pedido). Congela el snapshot, sube el PDF interno a S3 y escribe la bitácora. Solo rol `admin`. Acepta `Idempotency-Key`. 409 `transicion_invalida` (no está en `borrador`), `version_desactualizada`; 422 `comprobante_inexistente`, `comprobante_de_otro_cliente`; 503 `almacenamiento_no_disponible` (no cambia nada). Ver [Aprobación de borradores](#aprobación-de-borradores). |
+| POST | `/api/v1/documentos/borradores/{id}/rechazar` | Descarta el borrador en la revisión: `motivo` (3 a 500 caracteres). Queda `descartado` con su contenido y su fila en la bitácora. Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 409 `transicion_invalida`; 422 `validacion`. |
+| GET | `/api/v1/documentos/borradores/{id}/revisiones` | La bitácora del borrador: `accion`, `usuario`, `momento`, `hash_contenido`, `hash_snapshot`, `version_prompt`, `motivo`, `comprobante_id`. Todos los roles. |
+| GET | `/api/v1/documentos/borradores/{id}/pdf` | `{url_descarga, expira_en_segundos}`: URL prefirmada **nueva** del PDF aprobado (`?en_linea=true` para verlo en la pestaña). 409 `pdf_no_disponible` si no está aprobado. Todos los roles. |
 | POST | `/api/v1/razas` | Alta de raza. 409 `raza_duplicada`. |
 | POST | `/api/v1/madres` | Alta de madre reina. 409 `madre_duplicada`. |
 | POST | `/api/v1/parques` | Alta de parque de fecundación (`nombre`, `ubicacion`, `capacidad_max` en núcleos). 409 `parque_duplicado`. |
@@ -381,6 +385,19 @@ Acepta `Idempotency-Key`: un reintento con la misma clave devuelve el pedido com
 | 422 `validacion` | El cuerpo no cumple el formato: otro estado (incluido `reservado`), un banco o una línea repetidos, una fecha futura |
 
 `tests/test_api_transiciones.py` prueba la matriz completa y un despacho repartido entre dos bancos; `tests/test_concurrencia_despacho.py`, despachos y reservas simultáneos de la misma raza.
+
+### Aprobación de borradores
+
+La IA redacta y una persona decide (#42, `docs/dominio.md` "Aprobación de borradores"): aprueba solo `admin`, nunca la IA. Un borrador listo (`borrador`) termina en uno de dos estados finales:
+
+- **`aprobado`**: `POST .../aprobar` con el `hash_contenido` que mostró la pantalla. Si el contenido cambió, 409 `version_desactualizada`: se aprueba lo que se vio. En una transacción: bloquea la fila (`FOR UPDATE`), arma el **snapshot** con exactamente lo aprobado (el borrador, el pedido con los totales que calcula el sistema y, si se pasó `comprobante_id`, el comprobante tal como se transcribió en `/comprobantes`), renderiza el PDF desde el snapshot, lo sube a `documentos/<tenant>/borradores/<id>.pdf` y recién ahí guarda el estado y la fila de la bitácora. Si S3 falla, 503 y el borrador sigue en revisión.
+- **`descartado`**: `POST .../rechazar` con un `motivo`. No es `rechazado`: ese lo decide el validador o el modelo y no tiene contenido.
+
+El PDF es un **documento interno**: el pie dice quién lo aprobó, cuándo, la versión (primeros 12 caracteres del hash) y "No es un comprobante fiscal". El sistema no emite ni numera comprobantes (ADR 0008): la factura la emite ARCA y su PDF se sube con `/documentos/subidas`.
+
+Aprobado y descartado son inmutables: además de la API, un trigger de la base (migración 0018) rechaza todo UPDATE o DELETE, también del dueño de las tablas (si llega a la API, 409 `borrador_inmutable`). La corrección es un borrador nuevo con `corrige_a`. La bitácora (`revision_borrador`) es append-only: el rol de la API tiene `SELECT` e `INSERT`, sin `UPDATE` ni `DELETE`.
+
+La respuesta de aprobar no trae URL prefirmada: se guarda para la idempotencia y una URL guardada vencería. Se pide aparte con `GET .../pdf`, que firma una nueva cada vez.
 
 ---
 

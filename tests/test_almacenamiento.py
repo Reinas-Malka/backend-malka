@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import sys
+import types
 import uuid
 from typing import Any
 
@@ -113,3 +115,72 @@ def test_sin_bucket_configurado_es_503(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert error.value.status_code == 503
     assert error.value.code == "subida_no_configurada"
+
+
+class SubidorFalso:
+    def __init__(self, falla: bool = False) -> None:
+        self.falla = falla
+        self.subidos: list[dict[str, Any]] = []
+
+    def put_object(
+        self, *, Bucket: str, Key: str, Body: bytes, ContentType: str
+    ) -> dict[str, Any]:
+        if self.falla:
+            raise RuntimeError("AccessDenied: detalle de AWS")
+        self.subidos.append(
+            {"Bucket": Bucket, "Key": Key, "Body": Body, "ContentType": ContentType}
+        )
+        return {}
+
+
+def test_la_clave_del_pdf_del_borrador_es_fija_y_del_criadero() -> None:
+    borrador = uuid.UUID("22222222-2222-4222-8222-222222222222")
+
+    clave = almacenamiento.clave_pdf_borrador(TENANT, borrador)
+
+    assert clave == f"documentos/{TENANT}/borradores/{borrador}.pdf"
+
+
+def test_subir_pdf_lo_guarda_como_pdf(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BUCKET_DOCUMENTOS", "bucket-de-prueba")
+    subidor = SubidorFalso()
+
+    almacenamiento.subir_pdf(subidor, "documentos/x/borradores/y.pdf", b"%PDF-1.3")
+
+    assert subidor.subidos == [
+        {
+            "Bucket": "bucket-de-prueba",
+            "Key": "documentos/x/borradores/y.pdf",
+            "Body": b"%PDF-1.3",
+            "ContentType": "application/pdf",
+        }
+    ]
+
+
+def test_si_s3_falla_subir_pdf_es_503_sin_el_detalle_de_aws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BUCKET_DOCUMENTOS", "bucket-de-prueba")
+
+    with pytest.raises(almacenamiento.AlmacenamientoNoDisponibleError) as error:
+        almacenamiento.subir_pdf(SubidorFalso(falla=True), "k", b"%PDF")
+
+    assert error.value.status_code == 503
+    assert error.value.code == "almacenamiento_no_disponible"
+    assert "AccessDenied" not in error.value.message
+
+
+def test_el_subidor_real_es_el_cliente_s3_de_boto3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """boto3 no esta en local ni en el CI: se reemplaza el modulo."""
+    usado: dict[str, Any] = {}
+
+    def client(servicio: str, **opciones: Any) -> str:
+        usado.update(servicio=servicio, **opciones)
+        return "cliente-s3"
+
+    monkeypatch.setitem(sys.modules, "boto3", types.SimpleNamespace(client=client))
+
+    assert almacenamiento.subidor_s3() == "cliente-s3"
+    assert usado == {"servicio": "s3", "region_name": "us-east-1"}
