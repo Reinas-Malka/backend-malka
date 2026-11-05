@@ -12,10 +12,10 @@ Lo que NO va, a proposito:
   muestra aparte. Sin ellos en el contexto, un precio que el modelo copie o
   invente es un numero que no esta en los datos y el validador lo rechaza
   (borrador.py): la IA no puede escribir montos ni sin la moneda al lado.
-- El nombre del criadero. Esta en `tenant.nombre`, pero el rol de la API
-  (malka_app) no puede leer esa tabla: no tiene RLS y por eso no tiene GRANT
-  (tests/test_rol_aplicacion.py lo exige). Hasta que eso cambie, el
-  contexto dice que el nombre no esta y el prompt pide no inventarlo.
+
+El nombre del criadero sale de `nombre_del_criadero()` (migracion 0017):
+el rol de la API no lee la tabla tenant, que guarda el CUIT. Si no hay
+nombre, el contexto lo dice y el prompt pide no inventarlo.
 """
 
 from __future__ import annotations

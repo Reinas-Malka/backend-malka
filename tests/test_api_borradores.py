@@ -319,7 +319,8 @@ def test_el_worker_deja_el_borrador_listo_con_sus_metricas(
     assert mensaje.startswith("<datos>")
     for dato in (
         "Documento: Nota de venta",
-        "Vendedor: el criadero",
+        # El nombre sale de nombre_del_criadero() (0017): el suyo, no otro.
+        f"Vendedor: Criadero {datos.tenant}",
         "solo reinas",
         "Comprador: Apicola del Sur, país AR",
         "Tipo de venta: nacional",

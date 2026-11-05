@@ -119,7 +119,7 @@ BLOQUEAR_GENERANDO = text(
 # El contexto que ve el modelo: lo arma el sistema desde la base.
 LEER_PEDIDO = text(
     "SELECT p.moneda, p.destino_pais, p.incoterm, p.fecha_entrega_solicitada, "
-    "c.nombre AS cliente, c.pais "
+    "c.nombre AS cliente, c.pais, nombre_del_criadero() AS criadero "
     "FROM borrador b JOIN pedido p ON p.id = b.pedido_id "
     "JOIN cliente c ON c.id = p.cliente_id WHERE b.id = :id"
 )
@@ -216,6 +216,7 @@ def _contexto(sesion: Session, borrador_id: UUID) -> str:
     lineas = sesion.execute(LEER_LINEAS, {"id": borrador_id}).all()
     return armar_contexto(
         PedidoParaBorrador(
+            criadero=pedido.criadero,
             cliente=pedido.cliente,
             pais_cliente=pedido.pais,
             moneda=pedido.moneda,

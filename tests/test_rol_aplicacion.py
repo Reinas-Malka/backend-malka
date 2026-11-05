@@ -147,3 +147,32 @@ def test_toda_tabla_con_tenant_id_tiene_rls_y_permisos(motor_owner: Engine) -> N
         if not (f.rls_forzado and f.tiene_politica and f.app_lee)
     ]
     assert incompletas == []
+
+
+@pytest.mark.usefixtures("con_motor_app")
+def test_nombre_del_criadero_da_solo_el_propio(
+    motor_app: Engine, tenants: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    """La API no lee tenant (guarda el CUIT): la funcion de la 0017 le da
+    solo el nombre del criadero fijado, y nada sin tenant."""
+    a, _ = tenants
+    with db.sesion_de_tenant(a) as s:
+        nombre = s.execute(text("SELECT nombre_del_criadero()")).scalar()
+    assert nombre == f"Criadero {a}"
+    with motor_app.connect() as c:
+        assert c.execute(text("SELECT nombre_del_criadero()")).scalar() is None
+
+
+def test_nombre_del_criadero_no_se_ejecuta_desde_public(motor_owner: Engine) -> None:
+    with motor_owner.connect() as c:
+        publico = c.execute(
+            text(
+                "SELECT has_function_privilege('public', "
+                "'nombre_del_criadero()', 'EXECUTE')"
+            )
+        ).scalar()
+        definer = c.execute(
+            text("SELECT prosecdef FROM pg_proc WHERE proname = 'nombre_del_criadero'")
+        ).scalar()
+    assert publico is False
+    assert definer is True
