@@ -221,15 +221,32 @@ CAPACIDAD_BANCO_POR_DEFECTO = 276
 
 
 class BancoCrear(_Entrada):
-    identificador: Identificacion
-    # En reinas (no en nucleos, como el parque).
+    # Sin identificador, el sistema asigna el siguiente de la serie B-01,
+    # B-02, ... del criadero (services/produccion/bancos.py). Si viene, se
+    # respeta tal cual.
+    identificador: Identificacion | None = None
+    # En reinas (no en nucleos, como el parque). Opcional: sin el campo, 276.
+    # Despues del alta no se edita (BancoActualizar no lo acepta).
     capacidad_max: Capacidad = CAPACIDAD_BANCO_POR_DEFECTO
 
 
 class BancoActualizar(_Entrada):
+    """Se puede renombrar y reactivar; la capacidad queda fija desde el alta.
+
+    extra="forbid": un PATCH con capacidad_max es 422.
+    """
+
     identificador: Identificacion | None = None
-    capacidad_max: Capacidad | None = None
     activo: bool | None = None
+
+    @field_validator("identificador")
+    @classmethod
+    def identificador_no_nulo(cls, valor: str | None) -> str | None:
+        # Solo corre si el campo vino: null explicito no borra el
+        # identificador (es NOT NULL), y no se reasigna solo en una edicion.
+        if valor is None:
+            raise ValueError("El identificador no puede ser null.")
+        return valor
 
 
 class BancoRespuesta(BaseModel):
