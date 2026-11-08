@@ -184,6 +184,36 @@ class NucleoGuardado(NucleoRespuesta):
     advertencias: list[Advertencia] = []
 
 
+# Tope de un alta por cantidad: tantos como posiciones admite una fila.
+MAXIMO_NUCLEOS_POR_LOTE = MAXIMO_UBICACION
+
+
+class NucleosLoteCrear(_Entrada):
+    """Alta de varios nucleos en un parque: solo la cantidad.
+
+    El sistema les asigna la ubicacion: una fila nueva, la siguiente a la
+    mas alta del parque, con posiciones 1..cantidad.
+    """
+
+    cantidad: Annotated[int, Field(ge=1, le=MAXIMO_NUCLEOS_POR_LOTE, strict=True)]
+
+
+class NucleosLoteCreados(BaseModel):
+    """Respuesta del alta por cantidad: cuantos se crearon y donde."""
+
+    parque_id: UUID
+    creados: int
+    # Todos en la misma fila, en las posiciones posicion_desde..posicion_hasta.
+    fila: int
+    posicion_desde: int
+    posicion_hasta: int
+    # El parque despues del alta: nucleos activos y su capacidad.
+    nucleos_activos: int
+    capacidad_max: int
+    # parque_al_limite si el alta lo dejo lleno (#29).
+    advertencias: list[Advertencia] = []
+
+
 # --- banco (reinas enjauladas listas para despacho; dominio del 16/10) ---
 
 # Confirmada por la clienta el 16/10; igual que el DEFAULT de la migracion 0009.
