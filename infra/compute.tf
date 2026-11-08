@@ -38,6 +38,30 @@ resource "aws_iam_role_policy_attachment" "lambda_xray" {
   policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }
 
+# El asistente conversacional (POST /api/v1/asistente) llama a Bedrock
+# Converse desde la API. Converse se autoriza con bedrock:InvokeModel (no usa
+# streaming, asi que InvokeModelWithResponseStream no hace falta), sobre los
+# MISMOS ARN acotados que el worker: el perfil de inferencia us. y el modelo
+# de fundacion en las regiones a las que reparte (local.arns_modelo_bedrock,
+# main.tf). La red ya esta: la API usa el mismo security group y las mismas
+# subredes que el worker, y el VPC endpoint de bedrock-runtime acepta 443
+# desde ese security group (network.tf).
+resource "aws_iam_role_policy" "lambda_bedrock" {
+  name = "${local.name}-api-bedrock"
+  role = aws_iam_role.lambda_api.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "bedrock:InvokeModel"
+        Resource = local.arns_modelo_bedrock
+      },
+    ]
+  })
+}
+
 # Se declara explicitamente para fijar la retencion. Si no, Lambda lo crea solo
 # y guarda los logs para siempre.
 resource "aws_cloudwatch_log_group" "lambda_api" {
@@ -55,7 +79,10 @@ resource "aws_lambda_function" "api" {
   package_type  = "Image"
   image_uri     = "${aws_ecr_repository.backend.repository_url}:${var.image_tag}"
   memory_size   = 1024
-  timeout       = 30
+  # API Gateway corta a los 29 s (timeout_milliseconds de api.tf): mas que
+  # eso deja la Lambda trabajando para una respuesta que nadie recibe. El
+  # asistente se presupuesta en ~22 s para responder antes del corte.
+  timeout       = 29
   architectures = ["x86_64"]
 
   # Va dentro de la VPC porque mas adelante tiene que hablar con RDS.

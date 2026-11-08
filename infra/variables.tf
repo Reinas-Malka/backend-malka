@@ -29,7 +29,7 @@ variable "habilitar_endpoint_sqs" {
 }
 
 variable "habilitar_endpoint_bedrock" {
-  description = "VPC endpoint de interface de bedrock-runtime (~7,30 USD/mes). El worker lo usa para el borrador con IA (#40): sin NAT, es la unica ruta a Bedrock"
+  description = "VPC endpoint de interface de bedrock-runtime (~7,30 USD/mes). Lo usan el worker (borrador con IA, #40) y la API (asistente conversacional): sin NAT, es la unica ruta a Bedrock"
   type        = bool
   default     = true
 }
