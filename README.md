@@ -143,6 +143,7 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | POST | `/api/v1/documentos/borradores` | Pide a la IA el borrador de un documento de un pedido (#40): `pedido_id`. Responde **202** con el borrador en `generando` y lo encola; el worker lo resuelve en segundos. Reserva una llamada del límite de IA (429 `limite_ia_por_minuto` o `limite_ia_diario`). Roles `admin` y `ventas`. Acepta `Idempotency-Key`. 422 `pedido_inexistente`. |
 | GET | `/api/v1/documentos/borradores` | Borradores del más nuevo al más viejo, paginados. Filtro opcional `?pedido_id=`. Todos los roles. |
 | GET | `/api/v1/documentos/borradores/{id}` | Un borrador: `estado` (`generando`, `borrador` o `rechazado`), `contenido` (`encabezado`, `cuerpo`, `notas`; solo en `borrador`) y `motivo_rechazo` (`salida_invalida`, `error_modelo` o `cola_no_disponible`). El front consulta hasta que sale de `generando`. 404 `borrador_no_encontrado`. Todos los roles. |
+| POST | `/api/v1/asistente` | Asistente conversacional (Bedrock Haiku 4.5 con herramientas, ver [Asistente conversacional](#asistente-conversacional)). Cuerpo: `mensajes` (1 a 20, cada uno `{rol, texto}` con `rol` `usuario` o `asistente` de hasta 2000 caracteres; el último, del usuario). El servidor no guarda conversaciones. Responde `{texto, consultas, propuestas}`: las propuestas **no se ejecutaron**, el front las confirma con el endpoint que indican. Cada llamada al modelo cuenta en el límite de IA (429 `limite_ia_por_minuto` o `limite_ia_diario`). 503 `asistente_no_disponible` si Bedrock falla; 422 `ultimo_mensaje_no_es_del_usuario`. Todos los roles. |
 | POST | `/api/v1/razas` | Alta de raza. 409 `raza_duplicada`. |
 | POST | `/api/v1/madres` | Alta de madre reina. 409 `madre_duplicada`. |
 | POST | `/api/v1/parques` | Alta de parque de fecundación (`nombre`, `ubicacion`, `capacidad_max` en núcleos). 409 `parque_duplicado`. |
@@ -775,6 +776,49 @@ El motivo de tener dos repositorios está documentado en [`docs/adr/0004-dos-rep
 - Cada llamada se reserva antes de hacerla (`reservar_llamada`, en la misma transacción del pedido: si algo falla, no cuenta) y se le anotan los tokens después (`registrar_consumo`).
 - **Métrica por criadero** en CloudWatch, namespace `MalkaSuite/IA`, dimensión `tenant_id`: `Llamadas`, `TokensEntrada` y `TokensSalida` (Embedded Metric Format, sin llamar a la API de CloudWatch).
 - Con los valores por defecto, el gasto máximo ronda 2,10 USD diarios por criadero.
+
+### Asistente conversacional
+
+`POST /api/v1/asistente` es un chatbot dentro de la app: el usuario pregunta en lenguaje natural y el asistente consulta datos o prepara operaciones. Usa el mismo modelo que el borrador (Haiku 4.5 por el perfil de inferencia), con *tool use* de Converse.
+
+- **Sin estado**: el front manda el historial en cada pedido; el servidor no guarda conversaciones.
+- **Lectura**: las herramientas corren en el servidor con la sesión del tenant del usuario (RLS) y llaman a los mismos repositorios que los GET, no a la API por HTTP. Cada una corre en una transacción `READ ONLY`. Devuelven resúmenes compactos (hasta 20 filas, sin CUIT).
+- **Escritura = propuesta**: las herramientas `proponer_*` no escriben nada. Resuelven los nombres ("Buckfast", "Apícola del Sur") a ids, arman el cuerpo exacto del endpoint REST, lo validan contra su schema real y devuelven una `Propuesta`. Si el cuerpo no valida o un nombre es ambiguo, el error vuelve al modelo para que corrija o pregunte. El front muestra el `resumen` (armado por el servidor, no por el modelo) y, si el usuario confirma, llama a `ruta` con su token y `Idempotency-Key: <id de la propuesta>`: toda escritura pasa por las mismas validaciones, roles e idempotencia de siempre.
+- **Fuera de alcance a propósito**: alta de comprobantes, aprobar o rechazar borradores, bajas, entregar o cancelar pedidos y catálogos administrativos. El asistente nunca genera números fiscales (CAE, número de comprobante, tipo de cambio, IVA de comprobantes).
+- **Los resultados de las herramientas son datos**: le llegan al modelo entre `<datos>` y `</datos>` (sin etiquetas anidadas), y el prompt (`app/services/ia/prompts/asistente_v1.txt`) dice que no son instrucciones.
+- **Topes**: hasta 4 rondas de herramientas y ~22 s en total (una llamada nueva arranca solo si su timeout, 2 s de conexión + 9 de lectura y sin reintentos, entra en el presupuesto); si se pasa, responde con lo que tenga y un aviso. `maxTokens` 1000, temperatura 0. Cada llamada a Converse reserva su lugar en el límite de IA del criadero y anota sus tokens (métrica `MalkaSuite/IA`). Hoy se registran con `motivo = 'borrador'`: sumar `asistente` al CHECK de `llamada_ia` necesita una migración, que queda para después de la 0018.
+- **Logs** sin el contenido de los mensajes: cantidad y tamaño de los mensajes, herramientas usadas, llamadas, tokens, latencia y por qué terminó.
+
+| Herramienta | Qué hace |
+|---|---|
+| `ver_disponibilidad` | Reinas enjauladas, reservadas y disponibles por raza, y en qué bancos están (`raza` opcional) |
+| `buscar_pedidos` / `ver_pedido` | Pedidos por `estado` y `cliente`; un pedido con líneas, importes del sistema y reservas |
+| `listar_tandas` / `ver_tanda` | Tandas por `raza`, `desde`, `hasta`; una tanda con celdas por estado, parques y bancos |
+| `ver_indicadores` | KPIs de producción por tanda o por raza (`agrupar`, `desde`, `hasta`) |
+| `buscar_clientes` | Clientes por nombre, sin tildes ni mayúsculas (`incluir_inactivos` opcional) |
+| `listar_catalogo` | `razas`, `productos` (ítems vendibles), `parques`, `bancos` o `materiales` |
+| `listar_embarques` / `listar_comprobantes` | Embarques por `estado` (con `documentos` x/6); comprobantes transcriptos por `cliente` |
+| `proponer_cliente` | → `POST /api/v1/clientes` (admin, ventas) |
+| `proponer_pedido` | → `POST /api/v1/pedidos` (admin, ventas). Nacional en ARS; exportación pide USD o EUR |
+| `proponer_reserva` | → `POST /api/v1/pedidos/{id}/reservas`, sin cuerpo (admin, ventas). Solo en borrador y si alcanza el disponible |
+| `proponer_tanda` | → `POST /api/v1/tandas` (admin, produccion). Si hay un solo material activo, usa ese |
+| `proponer_operacion_tanda` | → `POST /api/v1/tandas/{id}/operaciones` (admin, produccion): descartar, introducir, cosechar o pasar a banco |
+| `proponer_borrador` | → `POST /api/v1/documentos/borradores` (admin, ventas) |
+
+Forma de una propuesta:
+
+```json
+{
+  "id": "6f1c…",
+  "accion": "crear_pedido",
+  "metodo": "POST",
+  "ruta": "/api/v1/pedidos",
+  "cuerpo": {"cliente_id": "…", "moneda": "ARS", "fecha_entrega_solicitada": "2026-12-15",
+             "items": [{"item_vendible_id": "…", "raza_id": "…", "cantidad": 20, "precio_unitario": "35000"}]},
+  "resumen": [{"etiqueta": "Cliente", "valor": "Apícola del Sur"}, {"etiqueta": "Línea 1", "valor": "20 reinas Buckfast (Reina fecundada) a 35000 ARS c/u"}],
+  "roles_permitidos": ["admin", "ventas"]
+}
+```
 
 ## Costo fijo de infraestructura
 
