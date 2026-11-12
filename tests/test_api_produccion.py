@@ -202,8 +202,9 @@ RECURSOS = [
     Recurso(
         url=BANCOS,
         cuerpo=lambda api, t, n: {"identificador": f"B-{n:02d}"},
-        cambio={"capacidad_max": 300},
-        invalido={"capacidad_max": 0},
+        # La capacidad ya no se edita (test_api_bancos.py): se renombra.
+        cambio={"identificador": "B-99"},
+        invalido={"identificador": "   "},
         duplicado="banco_duplicado",
         no_encontrado="banco_no_encontrado",
     ),
@@ -1185,22 +1186,6 @@ def test_banco_cuenta_sus_reinas_desde_las_celdas(
     leido = api.get(f"{BANCOS}/{banco['id']}", headers=como(tenant)).json()
 
     assert leido["reinas_en_banco"] == 4
-
-
-def test_capacidad_menor_que_las_reinas_del_banco_es_409(
-    api: TestClient, criaderos: Criaderos, motor_owner: Engine
-) -> None:
-    tenant = criaderos[0]
-    banco = crear(api, BANCOS, tenant, {"identificador": "B-norte"})
-    _enjaular_en_banco(motor_owner, tenant, banco["id"], 4)
-
-    respuesta = api.patch(
-        f"{BANCOS}/{banco['id']}", json={"capacidad_max": 3}, headers=como(tenant)
-    )
-
-    assert respuesta.status_code == 409
-    assert codigo(respuesta) == "capacidad_insuficiente"
-    assert respuesta.json()["error"]["details"]["reinas_en_banco"] == 4
 
 
 def test_banco_con_reinas_no_se_da_de_baja(

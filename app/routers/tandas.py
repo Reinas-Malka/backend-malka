@@ -20,6 +20,7 @@ from app.db import obtener_sesion
 from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
 from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
 from app.schemas.produccion import (
+    EstadoTanda,
     OperacionCrear,
     OperacionRealizada,
     TandaCreada,
@@ -57,11 +58,13 @@ def listar_tandas(
     # Rango de fecha_traslarve, con los dos dias incluidos.
     desde: date | None = None,
     hasta: date | None = None,
+    # en_curso (sin cosechar) o cosechada; otro valor es 422.
+    estado: EstadoTanda | None = None,
     pagina: ParametrosDePagina = Depends(parametros_de_pagina),
     sesion: Session = Depends(obtener_sesion),
 ) -> Pagina[TandaRespuesta]:
     return repositorio_tandas.listar(
-        sesion, pagina, raza_id=raza_id, desde=desde, hasta=hasta
+        sesion, pagina, raza_id=raza_id, desde=desde, hasta=hasta, estado=estado
     )
 
 
