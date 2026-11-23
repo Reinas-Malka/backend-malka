@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from app.errores import registrar_manejadores
 from app.observabilidad import instalar_observabilidad
 from app.routers import (
+    asistente,
     bancos,
     borradores,
     clientes,
@@ -62,6 +63,7 @@ app.include_router(embarques.router)
 app.include_router(documentos.router)
 app.include_router(comprobantes.router)
 app.include_router(borradores.router)
+app.include_router(asistente.router)
 
 
 class Salud(BaseModel):
