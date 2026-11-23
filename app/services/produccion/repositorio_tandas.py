@@ -16,7 +16,11 @@ Reglas de docs/dominio.md (confirmado 07/10 y 16/10):
   retroactivo (carga tardia de una tanda ya hecha).
 - Las celdas de la tanda (total y por estado) se cuentan al leer. El detalle
   suma donde estan: los nucleos con celdas en el parque y los bancos con
-  reinas cosechadas, tambien contados al leer.
+  reinas cosechadas, tambien contados al leer; y donde se introdujo (por
+  parque y fecha) y que salio (resultado), desde el nucleo y la fecha de
+  introduccion que la celda conserva.
+- estado (en_curso | cosechada) y fecha_salida_estimada se derivan al leer:
+  la tanda no guarda ninguno de los dos.
 
 Todo pasa en la transaccion de obtener_sesion: si algo falla, no queda ni la
 tanda, ni sus celdas, ni el consumo. Como en el resto de los repositorios,
@@ -41,15 +45,22 @@ from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del
 from app.schemas.produccion import (
     Advertencia,
     BancoDeTanda,
+    EstadoTanda,
+    IntroduccionDeTanda,
     MovimientoRespuesta,
     NucleoDeTanda,
+    ResultadoDeTanda,
     TandaCreada,
     TandaCrear,
     TandaDetalle,
     TandaRespuesta,
 )
 from app.services.produccion import repositorio_materiales
-from app.services.produccion.tandas import cupulas_para, fecha_de_traslarve_admitida
+from app.services.produccion.tandas import (
+    cupulas_para,
+    fecha_de_salida_estimada,
+    fecha_de_traslarve_admitida,
+)
 
 # FOR SHARE: mientras se crea la tanda, nadie da de baja la raza ni la madre.
 LEER_RAZA = text("SELECT activo FROM raza WHERE id = :id FOR SHARE")
@@ -82,9 +93,20 @@ INSERTAR_CONSUMO = text(
     "RETURNING id, material_id, tipo, cantidad, tanda_id, motivo, fecha"
 )
 
+# Cosechada: alguna celda ya paso por un nucleo y salio del parque
+# (enjaulada, despachada o descartada con nucleo). La misma regla que
+# repositorio_operaciones.YA_COSECHADA (vale tambien para una cosecha de 0).
+# EXISTS sobre ix_celda_tenant_tanda: corta en la primera celda que cumple.
+# Texto fijo, sin datos: se arma una sola vez al importar.
+_COSECHADA = (
+    "EXISTS (SELECT 1 FROM celda c WHERE c.tanda_id = t.id "
+    "AND c.nucleo_id IS NOT NULL AND c.estado <> 'introducida')"
+)
+
 OBTENER = text(
-    "SELECT t.id, t.raza_id, t.madre_id, t.fecha_traslarve, t.retroactivo, "
-    "t.fila_continuadora, t.posicion_continuadora "
+    "SELECT t.id, t.raza_id, t.madre_id, t.fecha_traslarve, t.retroactivo, "  # noqa: S608 - _COSECHADA es texto fijo
+    "t.fila_continuadora, t.posicion_continuadora, "
+    f"{_COSECHADA} AS cosechada "
     "FROM tanda t WHERE t.id = :id"
 )
 
@@ -117,17 +139,57 @@ BANCOS_DE_LA_TANDA = text(
     "ORDER BY b.identificador"
 )
 
+# Todo lo que entro a un nucleo, agrupado por parque y fecha. Usa el nucleo
+# y la fecha que la celda conserva en cualquier estado posterior (enjaulada,
+# en banco, despachada o descartada con nucleo): la introduccion no se borra
+# al cosechar. Un nucleo dado de baja sigue colgando de su parque.
+INTRODUCCIONES_DE_LA_TANDA = text(
+    "SELECT p.id AS parque_id, p.nombre AS parque_nombre, c.fecha_introduccion, "
+    "count(DISTINCT c.nucleo_id) AS nucleos, count(*) AS celdas "
+    "FROM celda c JOIN nucleo n ON n.id = c.nucleo_id "
+    "JOIN parque p ON p.id = n.parque_id "
+    "WHERE c.tanda_id = :tanda "
+    "GROUP BY p.id, p.nombre, c.fecha_introduccion "
+    "ORDER BY c.fecha_introduccion, p.nombre, p.id"
+)
+
+# El resultado en una sola pasada por las celdas de la tanda. La fecha de la
+# cosecha es la de enjaulado (la conservan tambien las despachadas) o, si se
+# cosecharon 0, la del descarte del resto, que es la misma (#28).
+RESULTADO_DE_LA_TANDA = text(
+    "SELECT "
+    "count(*) FILTER (WHERE nucleo_id IS NOT NULL) AS introducidas, "
+    "count(*) FILTER (WHERE estado = 'introducida') AS en_parque, "
+    "count(*) FILTER (WHERE estado = 'enjaulada') AS enjauladas, "
+    "count(*) FILTER (WHERE estado = 'enjaulada' AND banco_id IS NULL) "
+    "AS enjauladas_sin_banco, "
+    "count(*) FILTER (WHERE estado = 'despachada') AS despachadas, "
+    "count(*) FILTER (WHERE estado = 'descartada' AND nucleo_id IS NOT NULL) "
+    "AS descartadas_con_nucleo, "
+    "count(*) FILTER (WHERE estado = 'descartada' AND nucleo_id IS NULL) "
+    "AS descartadas_sin_nucleo, "
+    "COALESCE(max(fecha_enjaulado), max(fecha_descarte) "
+    "FILTER (WHERE estado = 'descartada' AND nucleo_id IS NOT NULL)) "
+    "AS fecha_cosecha "
+    "FROM celda WHERE tanda_id = :tanda"
+)
+
 # Filtros opcionales: con el parametro en NULL, la condicion deja pasar todo
 # (el CAST es obligatorio, igual que en pedidos). De la tanda mas nueva a la
 # mas vieja por fecha de traslarve; despues por fecha de carga; el id
-# desempata. El cursor es esa terna de la ultima fila.
+# desempata. El cursor es esa terna de la ultima fila. ?estado= compara
+# contra el mismo EXISTS que sale en la respuesta, asi el filtro y el campo
+# estado nunca se contradicen.
 LISTAR = text(
-    "SELECT t.id, t.raza_id, t.madre_id, t.fecha_traslarve, t.retroactivo, "
-    "t.fila_continuadora, t.posicion_continuadora, t.creado_en "
+    "SELECT t.id, t.raza_id, t.madre_id, t.fecha_traslarve, t.retroactivo, "  # noqa: S608 - _COSECHADA es texto fijo
+    "t.fila_continuadora, t.posicion_continuadora, t.creado_en, "
+    f"{_COSECHADA} AS cosechada "
     "FROM tanda t "
     "WHERE (CAST(:raza_id AS uuid) IS NULL OR t.raza_id = :raza_id) "
     "AND (CAST(:desde AS date) IS NULL OR t.fecha_traslarve >= :desde) "
     "AND (CAST(:hasta AS date) IS NULL OR t.fecha_traslarve <= :hasta) "
+    "AND (CAST(:cosechada AS boolean) IS NULL "
+    f"OR {_COSECHADA} = CAST(:cosechada AS boolean)) "
     "AND (:sin_cursor OR (t.fecha_traslarve, t.creado_en, t.id) < "
     "(CAST(:c_fecha AS date), CAST(:c_creado AS timestamptz), CAST(:c_id AS uuid))) "
     "ORDER BY t.fecha_traslarve DESC, t.creado_en DESC, t.id DESC LIMIT :limite"
@@ -193,6 +255,8 @@ def _a_respuesta(fila: Row[Any], por_estado: dict[str, int]) -> TandaRespuesta:
     return TandaRespuesta.model_validate(
         {
             **fila._mapping,
+            "fecha_salida_estimada": fecha_de_salida_estimada(fila.fecha_traslarve),
+            "estado": "cosechada" if fila.cosechada else "en_curso",
             "celdas": sum(por_estado.values()),
             "celdas_por_estado": por_estado,
         }
@@ -260,6 +324,18 @@ def detalle(sesion: Session, tanda_id: UUID) -> TandaDetalle:
             BancoDeTanda.model_validate(dict(fila._mapping))
             for fila in sesion.execute(BANCOS_DE_LA_TANDA, parametros)
         ],
+        introducciones=[
+            IntroduccionDeTanda.model_validate(dict(fila._mapping))
+            for fila in sesion.execute(INTRODUCCIONES_DE_LA_TANDA, parametros)
+        ],
+        resultado=_resultado(sesion, tanda_id),
+    )
+
+
+def _resultado(sesion: Session, tanda_id: UUID) -> ResultadoDeTanda:
+    fila = sesion.execute(RESULTADO_DE_LA_TANDA, {"tanda": tanda_id}).one()
+    return ResultadoDeTanda.model_validate(
+        {**fila._mapping, "cosechadas": fila.enjauladas + fila.despachadas}
     )
 
 
@@ -270,6 +346,7 @@ def listar(
     raza_id: UUID | None = None,
     desde: date | None = None,
     hasta: date | None = None,
+    estado: EstadoTanda | None = None,
 ) -> Pagina[TandaRespuesta]:
     """Tandas de la mas nueva a la mas vieja; desde y hasta incluyen el dia."""
     c_fecha, c_creado, c_id = valores_del_cursor(
@@ -281,6 +358,7 @@ def listar(
             "raza_id": raza_id,
             "desde": desde,
             "hasta": hasta,
+            "cosechada": None if estado is None else estado == "cosechada",
             "sin_cursor": pagina.cursor is None,
             "c_fecha": c_fecha,
             "c_creado": c_creado,

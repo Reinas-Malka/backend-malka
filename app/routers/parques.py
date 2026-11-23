@@ -1,4 +1,4 @@
-"""Endpoints de parques de fecundacion (#30).
+"""Endpoints de parques de fecundacion (#30) y alta de nucleos por cantidad.
 
 Leer puede cualquier rol del criadero; escribir, solo admin y produccion. Los
 permisos se declaran en cada ruta y la validacion vive en los schemas: los
@@ -18,11 +18,13 @@ from app.db import obtener_sesion
 from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
 from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
 from app.schemas.produccion import (
+    NucleosLoteCreados,
+    NucleosLoteCrear,
     ParqueActualizar,
     ParqueCrear,
     ParqueRespuesta,
 )
-from app.services.produccion import repositorio_parques
+from app.services.produccion import repositorio_nucleos, repositorio_parques
 
 router = APIRouter(prefix="/api/v1/parques", tags=["parques"])
 
@@ -53,6 +55,32 @@ def listar_parques(
 ) -> Pagina[ParqueRespuesta]:
     return repositorio_parques.listar(
         sesion, pagina, incluir_inactivos=incluir_inactivos
+    )
+
+
+@router.post(
+    "/{parque_id}/nucleos",
+    status_code=201,
+    response_model=NucleosLoteCreados,
+    dependencies=SOLO_ESCRITURA,
+)
+def crear_nucleos_por_cantidad(
+    parque_id: UUID,
+    datos: NucleosLoteCrear,
+    # Antes que la sesion: una clave mal formada no abre ninguna conexion.
+    pedido: PedidoIdempotente = Depends(pedido_idempotente),
+    sesion: Session = Depends(obtener_sesion),
+) -> JSONResponse:
+    """Crea `cantidad` nucleos en el parque; el sistema elige fila y posicion.
+
+    Van a una fila nueva (la siguiente a la mas alta del parque), en las
+    posiciones 1..cantidad. Con Idempotency-Key, un reintento devuelve lo ya
+    creado y no suma nucleos dos veces (#25).
+    """
+    return responder_una_vez(
+        sesion,
+        pedido,
+        lambda: repositorio_nucleos.crear_lote(sesion, parque_id, datos),
     )
 
 

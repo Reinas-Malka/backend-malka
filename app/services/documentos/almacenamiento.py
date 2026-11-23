@@ -7,12 +7,16 @@ firma: el rol de la Lambda solo puede PutObject/GetObject bajo documentos/
 
 boto3 viene en la imagen de Lambda, no en local ni en el CI: se carga solo
 cuando hace falta (mismo criterio que app/config.py). Los tests inyectan un
-Firmador propio.
+Firmador (y un Subidor) propio.
+
+La API tambien guarda un archivo que genera ella misma: el PDF del borrador
+aprobado (#42), con put_object desde la Lambda.
 """
 
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import re
 import unicodedata
@@ -20,6 +24,8 @@ import uuid
 from typing import Any, Protocol, cast
 
 from app.errores import ErrorDeApi
+
+logger = logging.getLogger("malka")
 
 REGION = "us-east-1"
 
@@ -44,6 +50,21 @@ class SubidaNoConfiguradaError(ErrorDeApi):
 
     status_code = 503
     codigo_por_defecto = "subida_no_configurada"
+
+
+class AlmacenamientoNoDisponibleError(ErrorDeApi):
+    """S3 no respondio al guardar un archivo que genera la API (503)."""
+
+    status_code = 503
+    codigo_por_defecto = "almacenamiento_no_disponible"
+
+
+class Subidor(Protocol):
+    """Lo unico que se usa del cliente de S3 para guardar lo que genera la API."""
+
+    def put_object(
+        self, *, Bucket: str, Key: str, Body: bytes, ContentType: str
+    ) -> Any: ...
 
 
 class Firmador(Protocol):
@@ -76,6 +97,32 @@ def firmador_s3() -> Firmador:
         ),
     )
     return cast(Firmador, cliente)
+
+
+def subidor_s3() -> Subidor:
+    """Cliente de S3 para put_object. Sale por el endpoint gateway de la VPC."""
+    boto3 = importlib.import_module("boto3")
+    return cast(Subidor, boto3.client("s3", region_name=REGION))
+
+
+def subir_pdf(subidor: Subidor, clave: str, contenido: bytes) -> None:
+    """Guarda un PDF generado por la API. Si S3 falla, 503 y nada cambia."""
+    bucket = bucket_documentos()
+    try:
+        subidor.put_object(
+            Bucket=bucket, Key=clave, Body=contenido, ContentType="application/pdf"
+        )
+    except Exception as error:
+        # Sin el mensaje de AWS en la respuesta: queda en el log con su traza.
+        logger.exception("no se pudo subir el PDF a S3 key=%s", clave)
+        raise AlmacenamientoNoDisponibleError(
+            "No se pudo guardar el PDF. Probá de nuevo en unos minutos."
+        ) from error
+
+
+def clave_pdf_borrador(tenant_id: uuid.UUID, borrador_id: uuid.UUID) -> str:
+    """documentos/<tenant_id>/borradores/<borrador_id>.pdf (CHECK de la 0018)."""
+    return f"{PREFIJO}/{tenant_id}/borradores/{borrador_id}.pdf"
 
 
 def nombre_para_clave(nombre: str) -> str:

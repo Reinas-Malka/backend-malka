@@ -232,6 +232,9 @@ def test_get_devuelve_la_tanda_con_sus_celdas(
         "raza_id": refs["raza_id"],
         "madre_id": None,
         "fecha_traslarve": fecha_pasada().isoformat(),
+        # Traslarve + 26 dias (≈ D26 de docs/dominio.md).
+        "fecha_salida_estimada": (fecha_pasada() + timedelta(days=26)).isoformat(),
+        "estado": "en_curso",
         "retroactivo": False,
         "fila_continuadora": None,
         "posicion_continuadora": None,
@@ -240,6 +243,18 @@ def test_get_devuelve_la_tanda_con_sus_celdas(
         # El detalle suma donde estan (front #9): recien creada, en ningun lado.
         "nucleos": [],
         "bancos": [],
+        "introducciones": [],
+        "resultado": {
+            "introducidas": 0,
+            "en_parque": 0,
+            "cosechadas": 0,
+            "enjauladas": 0,
+            "enjauladas_sin_banco": 0,
+            "despachadas": 0,
+            "descartadas_con_nucleo": 0,
+            "descartadas_sin_nucleo": 0,
+            "fecha_cosecha": None,
+        },
     }
 
 

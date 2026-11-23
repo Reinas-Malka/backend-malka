@@ -7,7 +7,7 @@ consumo").
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 # Cupulas de un cuadro de madera: cada cuadro tiene listones y cada liston
 # 15 cupulas. AMBIGUEDAD ABIERTA (docs/dominio.md, no resolver): no esta
@@ -48,3 +48,15 @@ def fecha_de_traslarve_admitida(fecha: date, *, retroactivo: bool) -> bool:
     acepta tal cual, aunque la fecha caiga en domingo, y queda marcada.
     """
     return retroactivo or es_dia_laborable(fecha)
+
+
+# Eje B de docs/dominio.md ("Ciclo de cria"): la celda se introduce ~D10 e
+# I0+16 queda enjaulada, lista para despacho o para pasar a un banco: ≈ D26
+# contado desde el traslarve (D0). Es una estimacion para planificar, no una
+# fecha registrada: la real es la de la cosecha.
+DIAS_HASTA_LA_SALIDA = 26
+
+
+def fecha_de_salida_estimada(fecha_traslarve: date) -> date:
+    """Cuando se espera cosechar la tanda: el traslarve mas ~26 dias (D26)."""
+    return fecha_traslarve + timedelta(days=DIAS_HASTA_LA_SALIDA)

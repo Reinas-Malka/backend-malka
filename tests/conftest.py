@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from sqlalchemy import Connection, Engine, create_engine, pool, text
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import DatabaseError
 from testcontainers.postgres import PostgresContainer
 
 from app import auth, db
@@ -64,6 +65,11 @@ def crear_app_de_prueba() -> FastAPI:
     @app.get("/explota")
     def explota() -> None:
         raise RuntimeError("detalle interno que no debe salir")
+
+    @app.get("/base-rota")
+    def base_rota() -> None:
+        # Un error de la base que no es del trigger de la 0018: sigue en 500.
+        raise DatabaseError("SELECT 1", {}, RuntimeError("detalle interno"))
 
     @app.get("/tandas/{tanda_id}")
     def tanda(tanda_id: int) -> dict[str, int]:
@@ -120,6 +126,21 @@ def crear_tenant(conexion: Connection, tenant: uuid.UUID) -> None:
 def fijar_tenant(conexion: Connection, tenant: uuid.UUID) -> None:
     """SET LOCAL del tenant en una conexion de prueba."""
     conexion.execute(db.FIJAR_TENANT, {"tenant_id": str(tenant)})
+
+
+def borrar_borradores(conexion: Connection) -> None:
+    """Borra los borradores y la bitacora del tenant fijado, aprobados incluidos.
+
+    El trigger de la 0018 frena el DELETE de un aprobado o descartado hasta al
+    duenio: solo un DISABLE TRIGGER explicito (DDL) lo saltea. Se vuelve a
+    activar en la misma transaccion. Las correcciones van antes que el
+    borrador al que apuntan (FK corrige_a).
+    """
+    conexion.execute(text("DELETE FROM revision_borrador WHERE true"))
+    conexion.execute(text("ALTER TABLE borrador DISABLE TRIGGER tg_borrador_inmutable"))
+    conexion.execute(text("DELETE FROM borrador WHERE corrige_a IS NOT NULL"))
+    conexion.execute(text("DELETE FROM borrador WHERE true"))
+    conexion.execute(text("ALTER TABLE borrador ENABLE TRIGGER tg_borrador_inmutable"))
 
 
 @dataclass(frozen=True)

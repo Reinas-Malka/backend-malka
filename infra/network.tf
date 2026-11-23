@@ -128,8 +128,12 @@ resource "aws_vpc_endpoint" "s3" {
 # se duplica y para este ambiente la resiliencia multi-AZ no justifica el
 # doble.
 #
-# El de bedrock-runtime lo usa el worker para el borrador con IA (#40): sin
-# NAT es su unica ruta a Bedrock. El de SQS lo necesita la API para
+# El de bedrock-runtime lo usan el worker para el borrador con IA (#40) y la
+# API para el asistente conversacional: sin NAT es su unica ruta a Bedrock.
+# Las dos Lambdas comparten el security group "lambda", que es el que admite
+# el security group de los endpoints, y con private_dns_enabled resuelven el
+# nombre publico de bedrock-runtime a la interfaz del endpoint (tambien desde
+# la subred de la otra AZ: el ruteo dentro de la VPC es local). El de SQS lo necesita la API para
 # SendMessage (el polling del event source mapping corre en la
 # infraestructura de Lambda, fuera de esta VPC).
 locals {

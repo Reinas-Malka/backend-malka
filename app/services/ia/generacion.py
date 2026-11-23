@@ -8,6 +8,9 @@ llama al modelo FUERA de una transaccion, valida con generar_borrador y
 guarda `borrador` o `rechazado` con sus metricas. Un mensaje repetido (SQS
 entrega al menos una vez) encuentra el borrador ya resuelto y no hace nada.
 
+La revision humana (aprobar o descartar, #42) vive en aprobacion.py; aca
+solo se lee lo que deja (snapshot, motivo, correccion).
+
 Ninguna consulta filtra por tenant_id: RLS se encarga (ADR 0009).
 """
 
@@ -37,6 +40,7 @@ from app.services.ia.contexto import (
     PedidoParaBorrador,
     armar_contexto,
 )
+from app.services.ia.snapshot import hash_contenido
 
 logger = logging.getLogger("malka")
 
@@ -44,7 +48,11 @@ logger = logging.getLogger("malka")
 class EstadoBorrador(StrEnum):
     GENERANDO = "generando"
     BORRADOR = "borrador"
+    # Lo decide el validador o el modelo: no hay contenido.
     RECHAZADO = "rechazado"
+    # Los deciden personas al revisar (#42): el contenido queda.
+    APROBADO = "aprobado"
+    DESCARTADO = "descartado"
 
 
 class MotivoRechazo(StrEnum):
@@ -62,6 +70,15 @@ class BorradorRespuesta(BaseModel):
     contenido: BorradorValidado | None
     motivo_rechazo: MotivoRechazo | None
     version_prompt: str | None
+    # sha256 del contenido canonico (snapshot.py): lo que se manda al aprobar.
+    hash_contenido: str | None
+    # Lo que agrega la revision humana (#42).
+    corrige_a: UUID | None
+    comprobante_id: UUID | None
+    motivo_descarte: str | None
+    aprobado_por: str | None
+    aprobado_en: datetime | None
+    pdf_disponible: bool
     creado_en: datetime
     actualizado_en: datetime
 
@@ -89,19 +106,28 @@ class ColaSqs:
 EXISTE_PEDIDO = text("SELECT 1 FROM pedido WHERE id = :id")
 
 INSERTAR = text(
-    "INSERT INTO borrador (pedido_id, llamada_ia_id, solicitado_por) "
-    "VALUES (:pedido_id, :llamada, :solicitado_por) "
-    "RETURNING id, pedido_id, estado, contenido, motivo_rechazo, version_prompt, "
-    "creado_en, actualizado_en"
+    "INSERT INTO borrador (pedido_id, llamada_ia_id, solicitado_por, corrige_a) "
+    "VALUES (:pedido_id, :llamada, :solicitado_por, :corrige_a) RETURNING id"
 )
+
+# La correccion apunta a un borrador aprobado del mismo pedido (#42).
+LEER_CORREGIDO = text("SELECT pedido_id, estado FROM borrador WHERE id = :id")
 
 OBTENER = text(
     "SELECT id, pedido_id, estado, contenido, motivo_rechazo, version_prompt, "
+    "corrige_a, comprobante_id, motivo_descarte, "
+    "snapshot -> 'aprobacion' ->> 'usuario' AS aprobado_por, "
+    "CAST(snapshot -> 'aprobacion' ->> 'momento' AS timestamptz) AS aprobado_en, "
+    "pdf_s3_key IS NOT NULL AS pdf_disponible, "
     "creado_en, actualizado_en FROM borrador WHERE id = :id"
 )
 
 LISTAR = text(
     "SELECT id, pedido_id, estado, contenido, motivo_rechazo, version_prompt, "
+    "corrige_a, comprobante_id, motivo_descarte, "
+    "snapshot -> 'aprobacion' ->> 'usuario' AS aprobado_por, "
+    "CAST(snapshot -> 'aprobacion' ->> 'momento' AS timestamptz) AS aprobado_en, "
+    "pdf_s3_key IS NOT NULL AS pdf_disponible, "
     "creado_en, actualizado_en FROM borrador "
     "WHERE (CAST(:pedido_id AS uuid) IS NULL OR pedido_id = :pedido_id) "
     "AND (:sin_cursor OR (creado_en, id) < "
@@ -141,27 +167,67 @@ RESOLVER = text(
 )
 
 
-def _no_encontrado() -> NoEncontradoError:
+def no_encontrado() -> NoEncontradoError:
     return NoEncontradoError("No existe el borrador.", code="borrador_no_encontrado")
 
 
 def _a_respuesta(fila: Row[Any]) -> BorradorRespuesta:
-    return BorradorRespuesta.model_validate(dict(fila._mapping))
+    datos = dict(fila._mapping)
+    contenido = (
+        None
+        if datos["contenido"] is None
+        else BorradorValidado.model_validate(datos["contenido"])
+    )
+    return BorradorRespuesta.model_validate(
+        {
+            **datos,
+            "contenido": contenido,
+            "hash_contenido": None if contenido is None else hash_contenido(contenido),
+        }
+    )
+
+
+def _validar_correccion(sesion: Session, pedido_id: UUID, corrige_a: UUID) -> None:
+    """Se corrige un borrador aprobado del mismo pedido; el aprobado no cambia."""
+    corregido = sesion.execute(LEER_CORREGIDO, {"id": corrige_a}).one_or_none()
+    if (
+        corregido is None
+        or corregido.pedido_id != pedido_id
+        or corregido.estado != EstadoBorrador.APROBADO
+    ):
+        # Uno de otro criadero responde igual que uno inexistente.
+        raise ValidacionError(
+            "Solo se corrige un borrador aprobado del mismo pedido.",
+            code="correccion_invalida",
+        )
 
 
 # --- API ---
 
 
-def pedir(sesion: Session, pedido_id: UUID, solicitado_por: str) -> BorradorRespuesta:
+def pedir(
+    sesion: Session,
+    pedido_id: UUID,
+    solicitado_por: str,
+    *,
+    corrige_a: UUID | None = None,
+) -> BorradorRespuesta:
     """Deja el borrador en generando, con su llamada reservada (o 429)."""
     if sesion.execute(EXISTE_PEDIDO, {"id": pedido_id}).first() is None:
         raise ValidacionError("No existe el pedido.", code="pedido_inexistente")
+    if corrige_a is not None:
+        _validar_correccion(sesion, pedido_id, corrige_a)
     llamada = limites.reservar_llamada(sesion, "borrador")
-    fila = sesion.execute(
+    borrador_id = sesion.execute(
         INSERTAR,
-        {"pedido_id": pedido_id, "llamada": llamada, "solicitado_por": solicitado_por},
-    ).one()
-    return _a_respuesta(fila)
+        {
+            "pedido_id": pedido_id,
+            "llamada": llamada,
+            "solicitado_por": solicitado_por,
+            "corrige_a": corrige_a,
+        },
+    ).scalar_one()
+    return obtener(sesion, borrador_id)
 
 
 def encolar(cola: Cola, tenant_id: UUID, borrador_id: UUID) -> None:
@@ -183,7 +249,7 @@ def encolar(cola: Cola, tenant_id: UUID, borrador_id: UUID) -> None:
 def obtener(sesion: Session, borrador_id: UUID) -> BorradorRespuesta:
     fila = sesion.execute(OBTENER, {"id": borrador_id}).one_or_none()
     if fila is None:
-        raise _no_encontrado()
+        raise no_encontrado()
     return _a_respuesta(fila)
 
 

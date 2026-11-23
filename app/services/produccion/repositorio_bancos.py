@@ -2,8 +2,12 @@
 
 El banco guarda reinas ya enjauladas, listas para despacho. No es el parque
 (que tiene nucleos para fecundar). Reglas fisicas, ademas de las del schema:
-- No se puede bajar la capacidad por debajo de las reinas que ya tiene (409
-  capacidad_insuficiente).
+- Sin identificador en el alta, el sistema asigna el siguiente de la serie
+  B-01, B-02, ... del criadero (services/produccion/bancos.py). Dos altas
+  simultaneas no eligen el mismo: toman un advisory lock por criadero y
+  recien despues, en otra consulta, buscan el mas alto. Un identificador a
+  mano no toma el lock: si choca, el UNIQUE responde 409 banco_duplicado.
+- La capacidad se fija en el alta (276 por defecto) y despues no se edita.
 - No se puede dar de baja un banco con reinas (409 banco_con_reinas): primero
   se despachan o se pasan a otro banco.
 
@@ -24,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.errores import ConflictoError, ErrorDeApi, NoEncontradoError
 from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del_cursor
 from app.schemas.produccion import BancoActualizar, BancoCrear, BancoRespuesta
+from app.services.produccion.bancos import PATRON_SERIE, identificador_siguiente
 from app.services.repositorio import escribir, validar_cambios
 
 INSERTAR = text(
@@ -54,6 +59,22 @@ OBTENER = text(f"SELECT {_COLUMNAS}FROM banco b WHERE b.id = :id")  # noqa: S608
 # mientras esta esperaba el bloqueo.
 BLOQUEAR = text("SELECT id FROM banco WHERE id = :id FOR UPDATE")
 
+# Un lock por criadero, solo para numerar: se suelta con la transaccion.
+# hashtextextended da el bigint que pide pg_advisory_xact_lock (igual que
+# repositorio_reservas.BLOQUEAR_RAZA).
+BLOQUEAR_NUMERACION = text(
+    "SELECT pg_advisory_xact_lock(hashtextextended("
+    "'banco_identificador:' || current_setting('app.tenant_id'), 0))"
+)
+
+# El numero mas alto de la serie (B-<digitos>) entre todos los bancos del
+# criadero, tambien los dados de baja: un identificador no se reusa. RLS
+# filtra banco. 0 si todavia no hay ninguno de la serie.
+MAYOR_NUMERO = text(
+    "SELECT COALESCE(max(CAST(substring(identificador FROM :patron) AS integer)), "
+    "0) FROM banco"
+)
+
 ACTUALIZAR = text(
     "UPDATE banco SET identificador = :identificador, "
     "capacidad_max = :capacidad_max, activo = :activo, actualizado_en = now() "
@@ -80,11 +101,21 @@ def _a_respuesta(fila: Row[Any]) -> BancoRespuesta:
     return BancoRespuesta.model_validate(dict(fila._mapping))
 
 
+def _identificador_libre(sesion: Session) -> str:
+    """El siguiente de la serie B-NN, con el criadero bloqueado para numerar."""
+    sesion.execute(BLOQUEAR_NUMERACION)
+    # Otra consulta despues del lock: en READ COMMITTED ve el banco que otra
+    # alta confirmo mientras esta esperaba.
+    mayor = sesion.execute(MAYOR_NUMERO, {"patron": PATRON_SERIE}).scalar_one()
+    return identificador_siguiente(int(mayor))
+
+
 def crear(sesion: Session, datos: BancoCrear) -> BancoRespuesta:
+    identificador = datos.identificador or _identificador_libre(sesion)
     fila = escribir(
         sesion,
         INSERTAR,
-        datos.model_dump(),
+        {**datos.model_dump(), "identificador": identificador},
         conflictos=CONFLICTOS,
         no_encontrado=no_encontrado,
     )
@@ -143,14 +174,9 @@ def actualizar(
     sesion: Session, banco_id: UUID, cambios: BancoActualizar
 ) -> BancoRespuesta:
     actual = bloquear(sesion, banco_id)
+    # La capacidad viene de lo guardado: BancoActualizar no la acepta.
     validado = validar_cambios(BancoCrear, actual, cambios)
     activo = actual.activo if cambios.activo is None else cambios.activo
-    if validado.capacidad_max < actual.reinas_en_banco:
-        raise ConflictoError(
-            "La capacidad no puede ser menor que las reinas que hay en el banco.",
-            code="capacidad_insuficiente",
-            details={"reinas_en_banco": actual.reinas_en_banco},
-        )
     if not activo and actual.reinas_en_banco > 0:
         _con_reinas(actual.reinas_en_banco)
     return _guardar(sesion, banco_id, validado, activo=activo)

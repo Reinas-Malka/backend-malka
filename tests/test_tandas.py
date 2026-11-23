@@ -147,3 +147,11 @@ def test_campos_obligatorios(campo: str) -> None:
     del datos[campo]
     with pytest.raises(ValidationError, match=campo):
         TandaCrear.model_validate(datos)
+
+
+def test_la_salida_estimada_es_el_traslarve_mas_26_dias() -> None:
+    """Eje B de docs/dominio.md: I0+16 enjaulado ≈ D26 desde el traslarve."""
+    assert tandas.DIAS_HASTA_LA_SALIDA == 26
+    assert tandas.fecha_de_salida_estimada(date(2026, 10, 2)) == date(2026, 10, 28)
+    # Dias calendario: cruza meses y no saltea domingos.
+    assert tandas.fecha_de_salida_estimada(date(2026, 12, 20)) == date(2027, 1, 15)

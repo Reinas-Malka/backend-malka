@@ -47,6 +47,7 @@ ORDEN = (
     "comprobante",
     "llamada_ia",
     "borrador",
+    "revision_borrador",
     "idempotencia",
 )
 
@@ -184,6 +185,15 @@ def _cargar(c: Connection, tenant: uuid.UUID) -> Filas:
         "INSERT INTO borrador (pedido_id, solicitado_por) "
         "VALUES (:pedido, 'sub-de-prueba') RETURNING id",
         pedido=filas["pedido"],
+    )
+    # La bitacora del borrador (#42): append-only, sin UPDATE ni DELETE.
+    insertar(
+        "revision_borrador",
+        "INSERT INTO revision_borrador (borrador_id, accion, usuario, "
+        "hash_contenido, motivo) VALUES (:borrador, 'descartado', "
+        "'sub-de-prueba', :hash, 'No sirve') RETURNING id",
+        borrador=filas["borrador"],
+        hash="a" * 64,
     )
     # La misma clave en los dos criaderos: es unica por tenant, no global (#25).
     insertar(

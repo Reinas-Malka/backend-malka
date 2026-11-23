@@ -9,3 +9,5 @@ cryptography==50.0.2
 # Base de zonas horarias para zoneinfo (app/fechas.py): Windows y la imagen
 # de Lambda no la traen garantizada.
 tzdata==2025.2
+# PDF interno del borrador aprobado (#42). Fuentes core: sin archivos extra.
+fpdf2==2.8.9

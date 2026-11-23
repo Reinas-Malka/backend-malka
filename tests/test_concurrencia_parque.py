@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import db
 from app.errores import ConflictoError
-from app.schemas.produccion import NucleoCrear
+from app.schemas.produccion import NucleoCrear, NucleosLoteCrear
 from app.services.produccion import repositorio_nucleos, repositorio_parques
 from tests.conftest import BaseDePrueba, crear_tenant, fijar_tenant
 
@@ -128,3 +128,45 @@ def test_no_se_da_de_baja_un_parque_mientras_se_le_suma_un_nucleo(
     with Session(motor) as s, s.begin():
         s.execute(db.FIJAR_TENANT, {"tenant_id": str(tenant)})
         assert repositorio_parques.obtener(s, parque_id).activo is True
+
+
+def test_dos_altas_por_cantidad_no_pasan_la_capacidad(
+    motor: Engine, parque: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    """La segunda ve el nucleo de la primera: en un parque de 1 no entra."""
+    tenant, parque_id = parque
+    datos = NucleosLoteCrear(cantidad=1)
+
+    def lote(s: Session) -> Any:
+        return repositorio_nucleos.crear_lote(s, parque_id, datos)
+
+    error = _en_paralelo(motor, tenant, lote, lote)
+
+    assert isinstance(error, ConflictoError)
+    assert error.code == "capacidad_insuficiente"
+    assert error.details["disponibles"] == 0
+    with Session(motor) as s, s.begin():
+        s.execute(db.FIJAR_TENANT, {"tenant_id": str(tenant)})
+        assert repositorio_parques.obtener(s, parque_id).nucleos_activos == 1
+
+
+def test_dos_altas_por_cantidad_simultaneas_usan_filas_distintas(
+    motor: Engine, motor_owner: Engine, parque: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    """Con lugar para las dos, la segunda espera y toma la fila siguiente."""
+    tenant, parque_id = parque
+    with motor_owner.begin() as c:
+        fijar_tenant(c, tenant)
+        c.execute(text("UPDATE parque SET capacidad_max = 10"))
+    datos = NucleosLoteCrear(cantidad=3)
+    filas: list[int] = []
+
+    def lote(s: Session) -> Any:
+        filas.append(repositorio_nucleos.crear_lote(s, parque_id, datos).fila)
+
+    assert _en_paralelo(motor, tenant, lote, lote) is None
+
+    assert sorted(filas) == [1, 2]
+    with Session(motor) as s, s.begin():
+        s.execute(db.FIJAR_TENANT, {"tenant_id": str(tenant)})
+        assert repositorio_parques.obtener(s, parque_id).nucleos_activos == 6

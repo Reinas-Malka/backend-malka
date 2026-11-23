@@ -33,6 +33,7 @@ def assert_forma_unica(respuesta: Any, status: int, code: str) -> dict[str, Any]
         ("GET", "/regla", 422, "validacion"),
         ("POST", "/pedidos", 422, "validacion"),
         ("GET", "/explota", 500, "error_interno"),
+        ("GET", "/base-rota", 500, "error_interno"),
         ("GET", "/no-existe", 404, "no_encontrado"),
         ("DELETE", "/regla", 405, "metodo_no_permitido"),
         ("GET", "/tandas/no-es-un-numero", 422, "validacion"),

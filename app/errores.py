@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DatabaseError, OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.contexto import request_id_actual
@@ -24,6 +24,11 @@ from app.contexto import request_id_actual
 # Errores de la base que no son bugs sino otra operacion usando los mismos
 # datos: lock_not_available (lock_timeout de app/db.py) y deadlock_detected.
 SQLSTATE_OCUPADA = {"55P03", "40P01"}
+
+# El trigger de la migracion 0018 frena todo UPDATE o DELETE de un borrador
+# aprobado o descartado. La API lo evita antes (FOR UPDATE y estado), asi
+# que llegar aca es una carrera o un camino que se salteo la regla: 409.
+SQLSTATE_BORRADOR_INMUTABLE = "MK409"
 
 
 class ErrorDeApi(Exception):
@@ -215,4 +220,17 @@ def registrar_manejadores(app: FastAPI) -> None:
             "operacion_en_curso",
             "Otra operación está usando estos datos. Probá de nuevo en unos "
             "segundos.",
+        )
+
+    @app.exception_handler(DatabaseError)
+    async def _borrador_inmutable(request: Request, exc: DatabaseError) -> JSONResponse:
+        # Solo el codigo propio del trigger; el resto de los errores de la
+        # base (un CHECK, una FK) son bugs y siguen siendo un 500.
+        if getattr(exc.orig, "sqlstate", None) != SQLSTATE_BORRADOR_INMUTABLE:
+            raise exc
+        return respuesta_de_error(
+            409,
+            "borrador_inmutable",
+            "El borrador ya fue aprobado o descartado: no se puede modificar. "
+            "Para corregirlo, pedí un borrador nuevo que lo corrija.",
         )

@@ -184,6 +184,36 @@ class NucleoGuardado(NucleoRespuesta):
     advertencias: list[Advertencia] = []
 
 
+# Tope de un alta por cantidad: tantos como posiciones admite una fila.
+MAXIMO_NUCLEOS_POR_LOTE = MAXIMO_UBICACION
+
+
+class NucleosLoteCrear(_Entrada):
+    """Alta de varios nucleos en un parque: solo la cantidad.
+
+    El sistema les asigna la ubicacion: una fila nueva, la siguiente a la
+    mas alta del parque, con posiciones 1..cantidad.
+    """
+
+    cantidad: Annotated[int, Field(ge=1, le=MAXIMO_NUCLEOS_POR_LOTE, strict=True)]
+
+
+class NucleosLoteCreados(BaseModel):
+    """Respuesta del alta por cantidad: cuantos se crearon y donde."""
+
+    parque_id: UUID
+    creados: int
+    # Todos en la misma fila, en las posiciones posicion_desde..posicion_hasta.
+    fila: int
+    posicion_desde: int
+    posicion_hasta: int
+    # El parque despues del alta: nucleos activos y su capacidad.
+    nucleos_activos: int
+    capacidad_max: int
+    # parque_al_limite si el alta lo dejo lleno (#29).
+    advertencias: list[Advertencia] = []
+
+
 # --- banco (reinas enjauladas listas para despacho; dominio del 16/10) ---
 
 # Confirmada por la clienta el 16/10; igual que el DEFAULT de la migracion 0009.
@@ -191,15 +221,32 @@ CAPACIDAD_BANCO_POR_DEFECTO = 276
 
 
 class BancoCrear(_Entrada):
-    identificador: Identificacion
-    # En reinas (no en nucleos, como el parque).
+    # Sin identificador, el sistema asigna el siguiente de la serie B-01,
+    # B-02, ... del criadero (services/produccion/bancos.py). Si viene, se
+    # respeta tal cual.
+    identificador: Identificacion | None = None
+    # En reinas (no en nucleos, como el parque). Opcional: sin el campo, 276.
+    # Despues del alta no se edita (BancoActualizar no lo acepta).
     capacidad_max: Capacidad = CAPACIDAD_BANCO_POR_DEFECTO
 
 
 class BancoActualizar(_Entrada):
+    """Se puede renombrar y reactivar; la capacidad queda fija desde el alta.
+
+    extra="forbid": un PATCH con capacidad_max es 422.
+    """
+
     identificador: Identificacion | None = None
-    capacidad_max: Capacidad | None = None
     activo: bool | None = None
+
+    @field_validator("identificador")
+    @classmethod
+    def identificador_no_nulo(cls, valor: str | None) -> str | None:
+        # Solo corre si el campo vino: null explicito no borra el
+        # identificador (es NOT NULL), y no se reasigna solo en una edicion.
+        if valor is None:
+            raise ValueError("El identificador no puede ser null.")
+        return valor
 
 
 class BancoRespuesta(BaseModel):
@@ -371,11 +418,21 @@ class TandaCrear(_Entrada):
         return self
 
 
+# en_curso: todavia no se cosecho. cosechada: ya se hizo la cosecha (una
+# sola vez por tanda): alguna celda paso por un nucleo y salio del parque.
+EstadoTanda = Literal["en_curso", "cosechada"]
+
+
 class TandaRespuesta(BaseModel):
     id: UUID
     raza_id: UUID
     madre_id: UUID | None
     fecha_traslarve: date
+    # fecha_traslarve + 26 dias (≈ D26 de docs/dominio.md): cuando se espera
+    # enjaular las reinas. Calculada, nunca guardada.
+    fecha_salida_estimada: date
+    # Derivado de las celdas al leer (ver EstadoTanda).
+    estado: EstadoTanda
     retroactivo: bool
     fila_continuadora: int | None
     posicion_continuadora: int | None
@@ -418,17 +475,57 @@ class BancoDeTanda(BaseModel):
     reinas: int
 
 
+class IntroduccionDeTanda(BaseModel):
+    """Donde y cuando se introdujo la tanda: un parque en una fecha.
+
+    Sale del nucleo y la fecha que la celda conserva despues de cosecharse,
+    pasar a banco o despacharse: no se pierde con el resto del ciclo.
+    """
+
+    parque_id: UUID
+    parque_nombre: str
+    fecha_introduccion: date
+    # Nucleos distintos que recibieron celdas ese dia en ese parque.
+    nucleos: int
+    celdas: int
+
+
+class ResultadoDeTanda(BaseModel):
+    """Que salio de lo que se introdujo, contado al leer desde las celdas."""
+
+    # Celdas que entraron a un nucleo, en cualquier estado actual.
+    introducidas: int
+    # Introducidas que siguen en el parque (todavia sin cosechar).
+    en_parque: int
+    # Reinas cosechadas: enjauladas + despachadas (igual que los KPIs, #31).
+    cosechadas: int
+    enjauladas: int
+    # Enjauladas que todavia no pasaron a un banco; las que si, en bancos.
+    enjauladas_sin_banco: int
+    despachadas: int
+    # Introducidas que no llegaron a reina (el resto de la cosecha).
+    descartadas_con_nucleo: int
+    # Descartadas antes de introducir: solo cierran la fila.
+    descartadas_sin_nucleo: int
+    # Dia de la cosecha; null mientras la tanda esta en curso.
+    fecha_cosecha: date | None
+
+
 class TandaDetalle(TandaRespuesta):
     """GET de una tanda: ademas de las celdas por estado, donde estan.
 
     Solo el detalle: el listado sigue con TandaRespuesta. Los nucleos son los
     que tienen celdas de la tanda en el parque; despues de la cosecha quedan
-    libres y la lista viene vacia. Las cosechadas sin banco son
-    celdas_por_estado["enjaulada"] menos la suma de bancos.
+    libres y la lista viene vacia. Los bancos, las enjauladas que hay hoy en
+    cada uno. introducciones y resultado no cambian al cosechar, pasar a
+    banco o despachar: salen del nucleo y la fecha que cada celda conserva.
     """
 
     nucleos: list[NucleoDeTanda]
     bancos: list[BancoDeTanda]
+    # Por parque y fecha, de la mas vieja a la mas nueva.
+    introducciones: list[IntroduccionDeTanda]
+    resultado: ResultadoDeTanda
 
 
 # --- operaciones por lote sobre la tanda (#28) ---

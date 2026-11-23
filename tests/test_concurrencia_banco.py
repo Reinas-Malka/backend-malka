@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import db
 from app.errores import ConflictoError
-from app.schemas.produccion import OperacionPasarABanco
+from app.schemas.produccion import BancoCrear, OperacionPasarABanco
 from app.services.produccion import repositorio_bancos, repositorio_operaciones
 from tests.conftest import crear_tenant, fijar_tenant
 from tests.test_concurrencia_parque import _en_paralelo, motor  # noqa: F401
@@ -105,3 +105,23 @@ def test_dos_lotes_simultaneos_no_pasan_la_capacidad_del_banco(
     with Session(motor) as s, s.begin():
         s.execute(db.FIJAR_TENANT, {"tenant_id": str(tenant)})
         assert repositorio_bancos.obtener(s, banco).reinas_en_banco == 3
+
+
+def test_dos_altas_sin_identificador_no_eligen_el_mismo(
+    motor: Engine,  # noqa: F811
+    escenario: Escenario,
+) -> None:
+    """La segunda espera el lock de numeracion y ve el banco de la primera.
+
+    El escenario ya tiene el banco "B1", que no es de la serie B-NN: no cuenta.
+    """
+    tenant = escenario[0]
+    identificadores: list[str] = []
+
+    def alta(s: Session) -> Any:
+        banco = repositorio_bancos.crear(s, BancoCrear())
+        identificadores.append(banco.identificador)
+
+    assert _en_paralelo(motor, tenant, alta, alta) is None
+
+    assert sorted(identificadores) == ["B-01", "B-02"]
