@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -26,20 +25,14 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from app.errores import ErrorDeApi
 from app.schemas.asistente import AccionPropuesta, ParResumen, Propuesta
-from app.schemas.borradores import BorradorPedido
 from app.schemas.clientes import ClienteCrear
-from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.schemas.produccion import OperacionCrear, TandaCrear
-from app.services.ia import generacion
-from app.services.ia.asistente import resolucion
+from app.services.ia.asistente import plan, resolucion
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.resolucion import ErrorDeHerramienta
-from app.services.ia.generacion import EstadoBorrador
 from app.services.produccion import repositorio_tandas
 from app.services.produccion.tandas import cupulas_para, fecha_de_traslarve_admitida
-from app.services.ventas import repositorio_disponibilidad, repositorio_pedidos
 from app.services.ventas.clientes import CondicionIva, TipoCliente
-from app.services.ventas.pedidos import EstadoPedido, Incoterm, Moneda, validar_pedido
 
 # Los mismos roles que exige cada endpoint (require_role en app/routers/).
 ROLES_VENTAS = ["admin", "ventas"]
@@ -53,11 +46,11 @@ NOTA = (
 _OPERACION: TypeAdapter[Any] = TypeAdapter(OperacionCrear)
 
 
-class _Entrada(BaseModel):
+class EntradaPropuesta(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-def _validar(adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]) -> Any:
+def validar_cuerpo(adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]) -> Any:
     """Valida el cuerpo como lo va a recibir el endpoint: en JSON.
 
     El error que vuelve al modelo dice el campo y la regla, sin el valor.
@@ -72,14 +65,28 @@ def _validar(adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]) -> Any:
         raise ErrorDeHerramienta(f"Los datos no son válidos: {problemas}") from None
 
 
-def _volcar(adaptador: TypeAdapter[Any], validado: Any) -> dict[str, Any]:
+def exigir(faltantes: dict[str, object]) -> None:
+    """ErrorDeHerramienta con los datos obligatorios que no vinieron.
+
+    Las entradas dejan opcionales los datos que el modelo no puede deducir,
+    asi puede llamar sin inventarlos y la herramienta le dice que preguntar.
+    """
+    faltan = [que for que, valor in faltantes.items() if valor is None]
+    if faltan:
+        raise ErrorDeHerramienta(
+            f"Faltan datos obligatorios: {', '.join(faltan)}. Preguntale al "
+            "usuario; no los completes por tu cuenta."
+        )
+
+
+def volcar_cuerpo(adaptador: TypeAdapter[Any], validado: Any) -> dict[str, Any]:
     cuerpo: dict[str, Any] = adaptador.dump_python(
         validado, mode="json", exclude_none=True
     )
     return cuerpo
 
 
-def _proponer(
+def armar_propuesta(
     ctx: Contexto,
     accion: AccionPropuesta,
     ruta: str,
@@ -87,6 +94,12 @@ def _proponer(
     resumen: list[tuple[str, str]],
     roles: list[str],
 ) -> Resultado:
+    if len(ctx.pendientes) >= plan.MAX_PROPUESTAS:
+        raise ErrorDeHerramienta(
+            f"Ya hay {plan.MAX_PROPUESTAS} propuestas en este turno, el tope. "
+            "Decile al usuario que confirme estas y proponé el resto después."
+        )
+    depende_de = plan.dependencias(ruta, cuerpo)
     propuesta = Propuesta(
         id=uuid4(),
         accion=accion,
@@ -94,35 +107,42 @@ def _proponer(
         cuerpo=cuerpo,
         resumen=[ParResumen(etiqueta=e, valor=v) for e, v in resumen],
         roles_permitidos=roles,
+        paso=len(ctx.pendientes) + 1,
+        depende_de=depende_de,
     )
     datos = {
         "propuesta_id": propuesta.id,
         "accion": accion,
+        "paso": propuesta.paso,
         "resumen": {par.etiqueta: par.valor for par in propuesta.resumen},
         # Si no puede, el boton aparece deshabilitado: conviene avisarle.
         "el_usuario_puede_confirmarla": bool(ctx.grupos & set(roles)),
         "nota": NOTA,
     }
+    if depende_de:
+        pasos = {p.id: p.paso for p in ctx.pendientes}
+        datos["depende_de_los_pasos"] = [pasos.get(i) for i in depende_de]
     return Resultado(datos, f"Propuse {accion.value.replace('_', ' ')}", propuesta)
 
 
-def _pedido(ctx: Contexto, pedido_id: UUID) -> PedidoRespuesta:
-    try:
-        return repositorio_pedidos.obtener(ctx.sesion, pedido_id)
-    except ErrorDeApi as error:
-        raise ErrorDeHerramienta(error.message) from None
-
-
-def _etiqueta_pedido(ctx: Contexto, pedido: PedidoRespuesta) -> str:
-    nombres = resolucion.nombres_de_clientes(ctx.sesion, [pedido.cliente_id])
-    cliente = nombres.get(pedido.cliente_id, "?")
-    return f"{cliente}, entrega {pedido.fecha_entrega_solicitada.isoformat()}"
+def validar_con_referencias(
+    adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]
+) -> tuple[Any, dict[str, Any]]:
+    """Valida un cuerpo que puede traer marcadores {{ref:...}} de pasos del
+    mismo turno: cada uno se cambia por un uuid de prueba para validar
+    contra el schema real, y el cuerpo que vuelve los tiene de nuevo."""
+    prueba, inverso = plan.con_uuids_de_prueba(cuerpo)
+    validado = validar_cuerpo(adaptador, prueba)
+    volcado: dict[str, Any] = plan.sustituir(
+        volcar_cuerpo(adaptador, validado), inverso
+    )
+    return validado, volcado
 
 
 # --- crear_cliente ---
 
 
-class EntradaCliente(_Entrada):
+class EntradaCliente(EntradaPropuesta):
     nombre: str = Field(description="Nombre o razón social.")
     pais: str = Field(description="Código ISO de 2 letras (AR para nacionales).")
     tipo: TipoCliente
@@ -134,12 +154,12 @@ class EntradaCliente(_Entrada):
 
 def proponer_cliente(ctx: Contexto, entrada: EntradaCliente) -> Resultado:
     adaptador = TypeAdapter(ClienteCrear)
-    cliente = _validar(adaptador, entrada.model_dump(mode="json"))
-    return _proponer(
+    cliente = validar_cuerpo(adaptador, entrada.model_dump(mode="json"))
+    return armar_propuesta(
         ctx,
         AccionPropuesta.CREAR_CLIENTE,
         "/api/v1/clientes",
-        _volcar(adaptador, cliente),
+        volcar_cuerpo(adaptador, cliente),
         [
             ("Nombre", cliente.nombre),
             ("País", cliente.pais),
@@ -151,160 +171,10 @@ def proponer_cliente(ctx: Contexto, entrada: EntradaCliente) -> Resultado:
     )
 
 
-# --- crear_pedido ---
-
-
-class LineaPropuesta(_Entrada):
-    producto: str = Field(description="Nombre del ítem vendible.")
-    raza: str = Field(description="Nombre de la raza.")
-    cantidad: int = Field(description="Cantidad de reinas.")
-    precio_unitario: Decimal = Field(
-        description="Precio por reina que dijo el usuario (no hay lista de precios)."
-    )
-
-
-class EntradaPedido(_Entrada):
-    cliente: str = Field(description="Nombre del cliente.")
-    fecha_entrega_solicitada: date = Field(description="AAAA-MM-DD.")
-    items: list[LineaPropuesta] = Field(min_length=1)
-    moneda: Moneda | None = Field(
-        default=None,
-        description="Nacional: ARS (se completa sola). Exportación: USD o EUR.",
-    )
-    destino_pais: str | None = Field(
-        default=None, description="Solo exportación: país ISO de 2 letras."
-    )
-    incoterm: Incoterm | None = Field(
-        default=None, description="Solo exportación, opcional."
-    )
-
-
-def _moneda(tipo: TipoCliente, moneda: Moneda | None) -> Moneda:
-    """Nacional va en ARS; exportacion en USD o EUR, y eso lo dice el usuario."""
-    if moneda is not None:
-        return moneda
-    if tipo == TipoCliente.NACIONAL:
-        return Moneda.ARS
-    raise ErrorDeHerramienta(
-        "Falta la moneda: un pedido de exportación va en USD o en EUR. "
-        "Preguntale al usuario."
-    )
-
-
-def proponer_pedido(ctx: Contexto, entrada: EntradaPedido) -> Resultado:
-    cliente = resolucion.cliente(ctx.sesion, entrada.cliente)
-    tipo = TipoCliente(cliente.tipo)
-    moneda = _moneda(tipo, entrada.moneda)
-    productos = resolucion.productos(ctx.sesion)
-    razas = resolucion.razas(ctx.sesion)
-    lineas = [
-        (
-            resolucion.resolver(linea.producto, productos, "el producto"),
-            resolucion.resolver(linea.raza, razas, "la raza"),
-            linea,
-        )
-        for linea in entrada.items
-    ]
-    adaptador = TypeAdapter(PedidoCrear)
-    pedido = _validar(
-        adaptador,
-        {
-            "cliente_id": cliente.id,
-            "moneda": moneda,
-            "destino_pais": entrada.destino_pais,
-            "incoterm": entrada.incoterm,
-            "fecha_entrega_solicitada": entrada.fecha_entrega_solicitada,
-            "items": [
-                {
-                    "item_vendible_id": producto.id,
-                    "raza_id": raza.id,
-                    "cantidad": linea.cantidad,
-                    "precio_unitario": linea.precio_unitario,
-                }
-                for producto, raza, linea in lineas
-            ],
-        },
-    )
-    # La misma regla que aplica el repositorio al crear (dominio, Pedidos).
-    try:
-        validar_pedido(tipo, pedido.moneda, pedido.destino_pais, pedido.incoterm)
-    except ValueError as error:
-        raise ErrorDeHerramienta(str(error)) from None
-
-    resumen = [("Cliente", cliente.nombre), ("Moneda", pedido.moneda.value)]
-    if pedido.destino_pais:
-        resumen.append(("Destino", pedido.destino_pais))
-    if pedido.incoterm:
-        resumen.append(("Incoterm", pedido.incoterm.value))
-    resumen.append(("Entrega solicitada", pedido.fecha_entrega_solicitada.isoformat()))
-    for numero, ((producto, raza, _), item) in enumerate(
-        zip(lineas, pedido.items, strict=True), start=1
-    ):
-        resumen.append(
-            (
-                f"Línea {numero}",
-                f"{item.cantidad} reinas {raza.nombre} ({producto.nombre}) a "
-                f"{item.precio_unitario} {pedido.moneda.value} c/u",
-            )
-        )
-    return _proponer(
-        ctx,
-        AccionPropuesta.CREAR_PEDIDO,
-        "/api/v1/pedidos",
-        _volcar(adaptador, pedido),
-        resumen,
-        ROLES_VENTAS,
-    )
-
-
-# --- reservar_pedido ---
-
-
-class EntradaReserva(_Entrada):
-    pedido_id: UUID = Field(description="Id del pedido en borrador.")
-
-
-def proponer_reserva(ctx: Contexto, entrada: EntradaReserva) -> Resultado:
-    pedido = _pedido(ctx, entrada.pedido_id)
-    if pedido.estado != EstadoPedido.BORRADOR:
-        raise ErrorDeHerramienta(
-            f"El pedido está {pedido.estado.value}: solo se reserva uno en borrador."
-        )
-    pedidas: dict[UUID, int] = {}
-    for linea in pedido.items:
-        pedidas[linea.raza_id] = pedidas.get(linea.raza_id, 0) + linea.cantidad
-    disponibilidad = {
-        d.raza_id: d for d in repositorio_disponibilidad.calcular(ctx.sesion)
-    }
-    resumen = [("Pedido", _etiqueta_pedido(ctx, pedido))]
-    faltan = []
-    for raza_id, cantidad in pedidas.items():
-        fila = disponibilidad.get(raza_id)
-        disponible = 0 if fila is None else fila.disponible
-        nombre = "?" if fila is None else fila.raza
-        if cantidad > disponible:
-            faltan.append(f"{nombre}: pide {cantidad} y hay {disponible} disponibles")
-        resumen.append(
-            (f"Reinas {nombre}", f"{cantidad} (disponibles ahora: {disponible})")
-        )
-    if faltan:
-        raise ErrorDeHerramienta(
-            "No alcanza la disponibilidad para reservar: " + "; ".join(faltan) + "."
-        )
-    return _proponer(
-        ctx,
-        AccionPropuesta.RESERVAR_PEDIDO,
-        f"/api/v1/pedidos/{pedido.id}/reservas",
-        None,
-        resumen,
-        ROLES_VENTAS,
-    )
-
-
 # --- crear_tanda ---
 
 
-class EntradaTanda(_Entrada):
+class EntradaTanda(EntradaPropuesta):
     raza: str = Field(description="Nombre de la raza.")
     fecha_traslarve: date = Field(description="AAAA-MM-DD, no futura.")
     cuadros: int = Field(description="Cuadros de madera: 1, 2 o 3.")
@@ -336,7 +206,7 @@ def proponer_tanda(ctx: Contexto, entrada: EntradaTanda) -> Resultado:
     raza = resolucion.resolver(entrada.raza, resolucion.razas(ctx.sesion), "la raza")
     material = _material(ctx, entrada.material)
     adaptador = TypeAdapter(TandaCrear)
-    tanda = _validar(
+    tanda = validar_cuerpo(
         adaptador,
         {
             "raza_id": raza.id,
@@ -374,11 +244,11 @@ def proponer_tanda(ctx: Contexto, entrada: EntradaTanda) -> Resultado:
         )
     if tanda.retroactivo:
         resumen.append(("Retroactiva", "sí"))
-    return _proponer(
+    return armar_propuesta(
         ctx,
         AccionPropuesta.CREAR_TANDA,
         "/api/v1/tandas",
-        _volcar(adaptador, tanda),
+        volcar_cuerpo(adaptador, tanda),
         resumen,
         ROLES_PRODUCCION,
     )
@@ -389,7 +259,7 @@ def proponer_tanda(ctx: Contexto, entrada: EntradaTanda) -> Resultado:
 AccionTanda = Literal["descartar", "introducir", "cosechar", "pasar_a_banco"]
 
 
-class EntradaOperacion(_Entrada):
+class EntradaOperacion(EntradaPropuesta):
     tanda_id: UUID = Field(description="Id de la tanda (sale de listar_tandas).")
     accion: AccionTanda
     cantidad: int = Field(description="Celdas o reinas del lote.")
@@ -433,7 +303,7 @@ def proponer_operacion(ctx: Contexto, entrada: EntradaOperacion) -> Resultado:
     except ErrorDeApi as error:
         raise ErrorDeHerramienta(error.message) from None
     cuerpo, extra = _cuerpo_operacion(ctx, entrada)
-    operacion = _validar(_OPERACION, cuerpo)
+    operacion = validar_cuerpo(_OPERACION, cuerpo)
     raza = {
         o.id: o.nombre for o in resolucion.razas(ctx.sesion, incluir_inactivas=True)
     }
@@ -447,66 +317,11 @@ def proponer_operacion(ctx: Contexto, entrada: EntradaOperacion) -> Resultado:
     ]
     if getattr(operacion, "fecha", None) is not None:
         resumen.append(("Fecha", operacion.fecha.isoformat()))
-    return _proponer(
+    return armar_propuesta(
         ctx,
         AccionPropuesta.OPERAR_TANDA,
         f"/api/v1/tandas/{tanda.id}/operaciones",
-        _volcar(_OPERACION, operacion),
+        volcar_cuerpo(_OPERACION, operacion),
         resumen + extra,
         ROLES_PRODUCCION,
-    )
-
-
-# --- pedir_borrador ---
-
-
-class EntradaBorrador(_Entrada):
-    pedido_id: UUID = Field(description="Id del pedido.")
-    corrige_a: UUID | None = Field(
-        default=None,
-        description="Solo para corregir: id del borrador APROBADO del mismo "
-        "pedido (sale de ver_pedido). El aprobado no cambia.",
-    )
-
-
-def _corregido(ctx: Contexto, pedido_id: UUID, borrador_id: UUID) -> None:
-    """Lo mismo que valida el endpoint (generacion._validar_correccion),
-    antes de proponer: asi el modelo corrige sin que el usuario confirme algo
-    que va a fallar."""
-    try:
-        corregido = generacion.obtener(ctx.sesion, borrador_id)
-    except ErrorDeApi:
-        corregido = None
-    if (
-        corregido is None
-        or corregido.pedido_id != pedido_id
-        or corregido.estado != EstadoBorrador.APROBADO
-    ):
-        raise ErrorDeHerramienta(
-            "Solo se corrige un borrador aprobado del mismo pedido."
-        )
-
-
-def proponer_borrador(ctx: Contexto, entrada: EntradaBorrador) -> Resultado:
-    pedido = _pedido(ctx, entrada.pedido_id)
-    if entrada.corrige_a is not None:
-        _corregido(ctx, pedido.id, entrada.corrige_a)
-    adaptador = TypeAdapter(BorradorPedido)
-    cuerpo = _volcar(
-        adaptador,
-        _validar(adaptador, {"pedido_id": pedido.id, "corrige_a": entrada.corrige_a}),
-    )
-    resumen = [("Pedido", _etiqueta_pedido(ctx, pedido))]
-    if entrada.corrige_a is not None:
-        resumen.append(("Corrige", "El borrador aprobado del pedido (no cambia)"))
-    resumen.append(
-        ("Qué pasa", "La IA redacta un borrador que una persona revisa y aprueba.")
-    )
-    return _proponer(
-        ctx,
-        AccionPropuesta.PEDIR_BORRADOR,
-        "/api/v1/documentos/borradores",
-        cuerpo,
-        resumen,
-        ROLES_VENTAS,
     )

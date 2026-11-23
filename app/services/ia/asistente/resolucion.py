@@ -123,16 +123,22 @@ def razas(sesion: Session, *, incluir_inactivas: bool = False) -> list[Opcion]:
     )
 
 
-def productos(sesion: Session) -> list[Opcion]:
+def productos(sesion: Session, *, incluir_inactivos: bool = False) -> list[Opcion]:
     """Items vendibles activos: los inactivos no se venden."""
     return _opciones(
-        repositorio_items_vendibles.listar, sesion, "nombre", incluir_inactivos=False
+        repositorio_items_vendibles.listar,
+        sesion,
+        "nombre",
+        incluir_inactivos=incluir_inactivos,
     )
 
 
-def parques(sesion: Session) -> list[Opcion]:
+def parques(sesion: Session, *, incluir_inactivos: bool = False) -> list[Opcion]:
     return _opciones(
-        repositorio_parques.listar, sesion, "nombre", incluir_inactivos=False
+        repositorio_parques.listar,
+        sesion,
+        "nombre",
+        incluir_inactivos=incluir_inactivos,
     )
 
 
@@ -142,10 +148,19 @@ def bancos(sesion: Session) -> list[Opcion]:
     )
 
 
-def materiales(sesion: Session) -> list[Opcion]:
+def materiales(sesion: Session, *, incluir_inactivos: bool = False) -> list[Opcion]:
     return _opciones(
-        repositorio_materiales.listar, sesion, "nombre", incluir_inactivos=False
+        repositorio_materiales.listar,
+        sesion,
+        "nombre",
+        incluir_inactivos=incluir_inactivos,
     )
+
+
+def coincidencia_exacta(nombre: str, opciones: Sequence[Opcion]) -> Opcion | None:
+    """La opcion con el mismo nombre (sin tildes ni mayusculas), si hay."""
+    buscado = normalizar(nombre)
+    return next((o for o in opciones if normalizar(o.nombre) == buscado), None)
 
 
 def _patron(nombre: str | None) -> str | None:

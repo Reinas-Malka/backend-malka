@@ -15,14 +15,12 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from httpx import Response
 from pydantic import TypeAdapter
 from sqlalchemy import Engine, text
 
 from app.fechas import hoy
 from app.main import app
 from app.routers.borradores import obtener_cola
-from app.schemas.asistente import Propuesta
 from app.schemas.borradores import BorradorPedido
 from app.schemas.clientes import ClienteCrear
 from app.schemas.pedidos import PedidoCrear
@@ -34,15 +32,16 @@ from tests.asistente_datos import (
     ModeloGuionado,
     cargar_borradores,
     cargar_criadero,
-    como,
+    confirmar,
     conversar,
     datos_de,
     error_de,
     limpiar,
     pide,
     pide_varias,
+    proponer,
     responde,
-    usar,
+    resumen,
 )
 from tests.conftest import fijar_tenant
 
@@ -80,41 +79,6 @@ def cola() -> Iterator[ColaFalsa]:
     app.dependency_overrides[obtener_cola] = lambda: falsa
     yield falsa
     app.dependency_overrides.pop(obtener_cola, None)
-
-
-def proponer(
-    api: TestClient,
-    criadero: Criadero,
-    nombre: str,
-    entrada: dict[str, Any],
-    rol: str = "admin",
-) -> tuple[dict[str, Any], Any]:
-    """La propuesta que devolvio la herramienta y lo que vio el modelo."""
-    cuerpo, resultado = usar(api, criadero, nombre, entrada, rol=rol)
-    assert resultado["status"] == "success", datos_de(resultado)
-    (propuesta,) = cuerpo["propuestas"]
-    Propuesta.model_validate(propuesta)
-    assert cuerpo["consultas"] == []
-    return propuesta, datos_de(resultado)
-
-
-def confirmar(
-    api: TestClient, criadero: Criadero, propuesta: dict[str, Any], rol: str
-) -> Response:
-    """Lo que hace el front: el endpoint de la propuesta, con su token."""
-    headers = {**como(criadero.tenant, rol), "Idempotency-Key": propuesta["id"]}
-    if propuesta["cuerpo"] is None:
-        return api.request(propuesta["metodo"], propuesta["ruta"], headers=headers)
-    return api.request(
-        propuesta["metodo"],
-        propuesta["ruta"],
-        json=propuesta["cuerpo"],
-        headers=headers,
-    )
-
-
-def resumen(propuesta: dict[str, Any]) -> dict[str, str]:
-    return {par["etiqueta"]: par["valor"] for par in propuesta["resumen"]}
 
 
 def dia_habil_pasado() -> date:

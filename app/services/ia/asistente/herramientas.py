@@ -19,7 +19,14 @@ from sqlalchemy import text
 
 from app.db import sesion_de_tenant
 from app.errores import ErrorDeApi
-from app.services.ia.asistente import lectura, lectura_borradores, propuestas
+from app.schemas.asistente import Propuesta
+from app.services.ia.asistente import (
+    lectura,
+    lectura_borradores,
+    propuestas,
+    propuestas_catalogos,
+    propuestas_pedidos,
+)
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.resolucion import ErrorDeHerramienta
 
@@ -125,17 +132,18 @@ CATALOGO: tuple[Herramienta, ...] = (
     Herramienta(
         "proponer_pedido",
         "Arma la propuesta de un pedido de reinas (queda en borrador). Acepta "
-        "nombres de cliente, producto y raza. No lo crea: el usuario confirma.",
-        propuestas.EntradaPedido,
-        propuestas.proponer_pedido,
+        "nombres de cliente, producto y raza, también los propuestos en este "
+        "turno. No lo crea: el usuario confirma.",
+        propuestas_pedidos.EntradaPedido,
+        propuestas_pedidos.proponer_pedido,
         escritura=True,
     ),
     Herramienta(
         "proponer_reserva",
         "Arma la propuesta de reservar las reinas de un pedido en borrador. No "
         "reserva: el usuario confirma.",
-        propuestas.EntradaReserva,
-        propuestas.proponer_reserva,
+        propuestas_pedidos.EntradaReserva,
+        propuestas_pedidos.proponer_reserva,
         escritura=True,
     ),
     Herramienta(
@@ -159,8 +167,77 @@ CATALOGO: tuple[Herramienta, ...] = (
         "proponer_borrador",
         "Arma la propuesta de pedirle a la IA el borrador del documento de un "
         "pedido. No lo pide: el usuario confirma.",
-        propuestas.EntradaBorrador,
-        propuestas.proponer_borrador,
+        propuestas_pedidos.EntradaBorrador,
+        propuestas_pedidos.proponer_borrador,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_cancelacion_pedido",
+        "Arma la propuesta de cancelar un pedido en borrador o reservado (libera "
+        "sus reservas). Cancelar es final. Acepta el id del pedido o el nombre "
+        "del cliente si tiene uno solo cancelable. No lo cancela: el usuario "
+        "confirma.",
+        propuestas_pedidos.EntradaCancelacion,
+        propuestas_pedidos.proponer_cancelacion,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_parque",
+        "Arma la propuesta de alta de un parque de fecundación (nombre, "
+        "ubicación, capacidad en núcleos). Se crea sin núcleos. No lo crea: el "
+        "usuario confirma.",
+        propuestas_catalogos.EntradaParque,
+        propuestas_catalogos.proponer_parque,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_nucleos",
+        "Arma la propuesta de agregar N núcleos a un parque que YA existe (por "
+        "nombre o id); el sistema elige fila y posiciones. Si el parque todavía "
+        "no existe, primero proponé el parque. No los crea: el usuario confirma.",
+        propuestas_catalogos.EntradaNucleos,
+        propuestas_catalogos.proponer_nucleos,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_banco",
+        "Arma la propuesta de alta de un banco de reinas. Sin datos: el "
+        "identificador (B-NN) y la capacidad los asigna el sistema. No lo crea: "
+        "el usuario confirma.",
+        propuestas_catalogos.EntradaBanco,
+        propuestas_catalogos.proponer_banco,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_raza",
+        "Arma la propuesta de alta de una raza. No la crea: el usuario confirma.",
+        propuestas_catalogos.EntradaRaza,
+        propuestas_catalogos.proponer_raza,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_producto",
+        "Arma la propuesta de alta de un producto (ítem vendible: siempre "
+        "reinas, la raza va en cada línea del pedido). No lo crea: el usuario "
+        "confirma.",
+        propuestas_catalogos.EntradaProducto,
+        propuestas_catalogos.proponer_producto,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_material",
+        "Arma la propuesta de alta de un material (nombre y unidad). No lo "
+        "crea: el usuario confirma.",
+        propuestas_catalogos.EntradaMaterial,
+        propuestas_catalogos.proponer_material,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_movimiento_material",
+        "Arma la propuesta de registrar una compra o un ajuste de stock de un "
+        "material (por nombre). No lo registra: el usuario confirma.",
+        propuestas_catalogos.EntradaMovimiento,
+        propuestas_catalogos.proponer_movimiento,
         escritura=True,
     ),
 )
@@ -208,7 +285,12 @@ def _entrada(herramienta: Herramienta, datos: Any) -> BaseModel:
 
 
 def ejecutar(
-    nombre: str, datos: Any, *, tenant_id: UUID, grupos: frozenset[str]
+    nombre: str,
+    datos: Any,
+    *,
+    tenant_id: UUID,
+    grupos: frozenset[str],
+    pendientes: tuple[Propuesta, ...] = (),
 ) -> tuple[Herramienta, Resultado]:
     """Corre una herramienta, o ErrorDeHerramienta para devolverle al modelo.
 
@@ -223,7 +305,9 @@ def ejecutar(
     try:
         with sesion_de_tenant(tenant_id) as sesion:
             sesion.execute(SOLO_LECTURA)
-            resultado = herramienta.ejecutar(Contexto(sesion, grupos), entrada)
+            resultado = herramienta.ejecutar(
+                Contexto(sesion, grupos, pendientes), entrada
+            )
     except ErrorDeApi as error:
         raise ErrorDeHerramienta(error.message) from None
     return herramienta, resultado

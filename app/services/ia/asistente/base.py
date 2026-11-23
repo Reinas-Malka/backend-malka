@@ -18,10 +18,12 @@ PAGINA_CORTA = ParametrosDePagina(limite=MAX_FILAS, cursor=None)
 
 @dataclass(frozen=True)
 class Contexto:
-    """Con que corre una herramienta: la sesion del tenant y los roles."""
+    """Con que corre una herramienta: la sesion del tenant, los roles y las
+    propuestas que ya se armaron en este turno (un plan de varios pasos)."""
 
     sesion: Session
     grupos: frozenset[str]
+    pendientes: tuple[Propuesta, ...] = ()
 
 
 @dataclass(frozen=True)

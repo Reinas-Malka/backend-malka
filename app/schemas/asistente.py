@@ -37,8 +37,14 @@ TextoDeMensaje = Annotated[
 
 
 class RolMensaje(StrEnum):
+    """usuario y asistente: la charla. resultado: lo que paso con una
+    propuesta (confirmada, descartada o fallida), que el front agrega solo
+    despues de que el usuario la confirma o la descarta. Al modelo le llega
+    delimitado como dato dentro del turno del usuario, nunca como orden."""
+
     USUARIO = "usuario"
     ASISTENTE = "asistente"
+    RESULTADO = "resultado"
 
 
 class MensajeAsistente(BaseModel):
@@ -49,7 +55,8 @@ class MensajeAsistente(BaseModel):
 
 
 class PedidoAsistente(BaseModel):
-    """Cuerpo de POST /api/v1/asistente: el historial, el ultimo es del usuario."""
+    """Cuerpo de POST /api/v1/asistente: el historial. El ultimo es del
+    usuario o un resultado (el asistente sigue con el paso siguiente)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -70,6 +77,14 @@ class AccionPropuesta(StrEnum):
     CREAR_TANDA = "crear_tanda"
     OPERAR_TANDA = "operar_tanda"
     PEDIR_BORRADOR = "pedir_borrador"
+    CREAR_PARQUE = "crear_parque"
+    CREAR_NUCLEOS = "crear_nucleos"
+    CREAR_BANCO = "crear_banco"
+    CREAR_RAZA = "crear_raza"
+    CREAR_PRODUCTO = "crear_producto"
+    CREAR_MATERIAL = "crear_material"
+    REGISTRAR_MOVIMIENTO_MATERIAL = "registrar_movimiento_material"
+    CANCELAR_PEDIDO = "cancelar_pedido"
 
 
 class ParResumen(BaseModel):
@@ -85,11 +100,17 @@ class Propuesta(BaseModel):
     - id: uuid nuevo; el front lo usa como Idempotency-Key al confirmar.
     - metodo y ruta: el endpoint REST existente que la ejecuta.
     - cuerpo: el JSON exacto de ese endpoint, ya validado contra su schema;
-      null cuando el endpoint no lleva cuerpo (reservar un pedido).
+      null cuando el endpoint no lleva cuerpo (reservar un pedido) y {}
+      cuando todo lo asigna el sistema (crear un banco).
     - resumen: armado por el servidor desde el cuerpo y los nombres
       resueltos, nunca texto del modelo.
     - roles_permitidos: los del endpoint, para deshabilitar el boton si el
       usuario no puede confirmarla.
+    - paso: orden de ejecucion dentro de la respuesta (1..n).
+    - depende_de: propuestas de la misma respuesta que tienen que
+      ejecutarse antes. La ruta o el cuerpo llevan un marcador
+      {{ref:<id de esa propuesta>.id}} donde va el id del recurso que crea:
+      el front lo reemplaza con el id de la respuesta de ese paso.
     """
 
     id: UUID
@@ -99,6 +120,8 @@ class Propuesta(BaseModel):
     cuerpo: dict[str, Any] | None
     resumen: list[ParResumen]
     roles_permitidos: list[str]
+    paso: int = Field(default=1, ge=1)
+    depende_de: list[UUID] = []
 
 
 class RespuestaAsistente(BaseModel):
