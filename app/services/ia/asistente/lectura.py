@@ -16,10 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.schemas.kpis import Agrupacion
+from app.schemas.produccion import BancoRespuesta, EstadoTanda, TandaDetalle
 from app.services.exportacion import repositorio_embarques
 from app.services.exportacion.embarques import EstadoEmbarque, TipoDocumentoEmbarque
 from app.services.facturacion import repositorio_comprobantes
-from app.services.ia.asistente import resolucion
+from app.services.ia.asistente import lectura_borradores, resolucion
 from app.services.ia.asistente.base import MAX_FILAS, PAGINA_CORTA, Contexto, Resultado
 from app.services.produccion import (
     repositorio_bancos,
@@ -202,6 +203,9 @@ def ver_pedido(ctx: Contexto, entrada: EntradaVerPedido) -> Resultado:
             }
             for r in reservas
         ],
+        # Los borradores del documento, con su estado (aprobado y descartado
+        # los decide una persona, nunca el asistente).
+        **lectura_borradores.borradores_del_pedido(ctx.sesion, p.id),
     }
     return Resultado(datos, f"Consulté el pedido de {cliente}")
 
@@ -217,6 +221,10 @@ class EntradaListarTandas(_Entrada):
     hasta: date | None = Field(
         default=None, description="Fecha de traslarve máxima (AAAA-MM-DD)."
     )
+    estado: EstadoTanda | None = Field(
+        default=None,
+        description="en_curso (todavía sin cosechar) o cosechada.",
+    )
 
 
 def listar_tandas(ctx: Contexto, entrada: EntradaListarTandas) -> Resultado:
@@ -227,6 +235,7 @@ def listar_tandas(ctx: Contexto, entrada: EntradaListarTandas) -> Resultado:
         raza_id=None if raza is None else raza.id,
         desde=entrada.desde,
         hasta=entrada.hasta,
+        estado=entrada.estado,
     )
     razas = _nombres_de_razas(ctx.sesion)
     tandas = [
@@ -234,16 +243,40 @@ def listar_tandas(ctx: Contexto, entrada: EntradaListarTandas) -> Resultado:
             "id": t.id,
             "raza": razas.get(t.raza_id, "?"),
             "fecha_traslarve": t.fecha_traslarve,
+            "estado": t.estado,
+            "fecha_salida_estimada": t.fecha_salida_estimada,
             "retroactivo": t.retroactivo,
             "celdas": t.celdas,
             "celdas_por_estado": t.celdas_por_estado,
         }
         for t in pagina.items
     ]
-    resumen = "Consulté las tandas" + _sufijo(None if raza is None else raza.nombre)
+    resumen = "Consulté las tandas" + _sufijo(
+        None if raza is None else raza.nombre, entrada.estado
+    )
     return Resultado(
         {"tandas": tandas, "hay_mas": pagina.siguiente is not None}, resumen
     )
+
+
+def _historia_de_tanda(t: TandaDetalle) -> dict[str, Any]:
+    """Donde se introdujo y que salio: no cambia al cosechar ni despachar.
+
+    Sin ids de parque (el nombre alcanza para conversar) y las introducciones
+    acotadas a MAX_FILAS, como el resto de los resultados.
+    """
+    return {
+        "introducciones": [
+            {
+                "parque": i.parque_nombre,
+                "fecha": i.fecha_introduccion,
+                "nucleos": i.nucleos,
+                "celdas": i.celdas,
+            }
+            for i in t.introducciones[:MAX_FILAS]
+        ],
+        "resultado": t.resultado.model_dump(),
+    }
 
 
 class EntradaVerTanda(_Entrada):
@@ -265,11 +298,14 @@ def ver_tanda(ctx: Contexto, entrada: EntradaVerTanda) -> Resultado:
         "id": t.id,
         "raza": raza,
         "fecha_traslarve": t.fecha_traslarve,
+        "estado": t.estado,
+        "fecha_salida_estimada": t.fecha_salida_estimada,
         "retroactivo": t.retroactivo,
         "celdas": t.celdas,
         "celdas_por_estado": t.celdas_por_estado,
         "en_parques": [{"parque": nombre, **g} for nombre, g in por_parque.items()],
         "bancos": [{"banco": b.identificador, "reinas": b.reinas} for b in t.bancos],
+        **_historia_de_tanda(t),
     }
     return Resultado(datos, f"Consulté la tanda de {raza} del {t.fecha_traslarve}")
 
@@ -363,13 +399,30 @@ _LISTADOS: dict[str, Any] = {
 }
 
 
+def _banco(banco: BancoRespuesta) -> dict[str, Any]:
+    """La capacidad es la del alta (no se edita, #155): el asistente la lee
+    para saber cuantas reinas mas entran, nunca la propone cambiar."""
+    return {
+        "identificador": banco.identificador,
+        "capacidad_max": banco.capacidad_max,
+        "reinas_en_banco": banco.reinas_en_banco,
+        "lugares_libres": max(banco.capacidad_max - banco.reinas_en_banco, 0),
+        "activo": banco.activo,
+    }
+
+
 def listar_catalogo(ctx: Contexto, entrada: EntradaCatalogo) -> Resultado:
     pagina = _LISTADOS[entrada.catalogo](
         ctx.sesion, PAGINA_CORTA, incluir_inactivos=entrada.incluir_inactivos
     )
+    filas = (
+        [_banco(item) for item in pagina.items]
+        if entrada.catalogo == "bancos"
+        else [item.model_dump() for item in pagina.items]
+    )
     return Resultado(
         {
-            entrada.catalogo: [item.model_dump() for item in pagina.items],
+            entrada.catalogo: filas,
             "hay_mas": pagina.siguiente is not None,
         },
         f"Consulté el catálogo de {entrada.catalogo}",

@@ -802,26 +802,27 @@ El motivo de tener dos repositorios está documentado en [`docs/adr/0004-dos-rep
 - **Sin estado**: el front manda el historial en cada pedido; el servidor no guarda conversaciones.
 - **Lectura**: las herramientas corren en el servidor con la sesión del tenant del usuario (RLS) y llaman a los mismos repositorios que los GET, no a la API por HTTP. Cada una corre en una transacción `READ ONLY`. Devuelven resúmenes compactos (hasta 20 filas, sin CUIT).
 - **Escritura = propuesta**: las herramientas `proponer_*` no escriben nada. Resuelven los nombres ("Buckfast", "Apícola del Sur") a ids, arman el cuerpo exacto del endpoint REST, lo validan contra su schema real y devuelven una `Propuesta`. Si el cuerpo no valida o un nombre es ambiguo, el error vuelve al modelo para que corrija o pregunte. El front muestra el `resumen` (armado por el servidor, no por el modelo) y, si el usuario confirma, llama a `ruta` con su token y `Idempotency-Key: <id de la propuesta>`: toda escritura pasa por las mismas validaciones, roles e idempotencia de siempre.
-- **Fuera de alcance a propósito**: alta de comprobantes, aprobar o rechazar borradores, bajas, entregar o cancelar pedidos y catálogos administrativos. El asistente nunca genera números fiscales (CAE, número de comprobante, tipo de cambio, IVA de comprobantes).
-- **Los resultados de las herramientas son datos**: le llegan al modelo entre `<datos>` y `</datos>` (sin etiquetas anidadas), y el prompt (`app/services/ia/prompts/asistente_v1.txt`) dice que no son instrucciones.
+- **Fuera de alcance a propósito**: alta de comprobantes, aprobar o descartar borradores (la aprobación es humana; el asistente solo los lee con `ver_borrador`), bajas, entregar o cancelar pedidos y catálogos administrativos. El asistente nunca genera números fiscales (CAE, número de comprobante, tipo de cambio, IVA de comprobantes).
+- **Los resultados de las herramientas son datos**: le llegan al modelo entre `<datos>` y `</datos>` (sin etiquetas anidadas), y el prompt (`app/services/ia/prompts/asistente_v2.txt`) dice que no son instrucciones.
 - **Topes**: hasta 4 rondas de herramientas y ~22 s en total (una llamada nueva arranca solo si su timeout, 2 s de conexión + 9 de lectura y sin reintentos, entra en el presupuesto); si se pasa, responde con lo que tenga y un aviso. `maxTokens` 1000, temperatura 0. Cada llamada a Converse reserva su lugar en el límite de IA del criadero y anota sus tokens (métrica `MalkaSuite/IA`). Se registran con `motivo = 'asistente'` (CHECK de `llamada_ia`, migración 0019) para separar su consumo del del borrador, pero el tope por minuto y por día es uno solo por criadero y lo comparten los dos usos.
 - **Logs** sin el contenido de los mensajes: cantidad y tamaño de los mensajes, herramientas usadas, llamadas, tokens, latencia y por qué terminó.
 
 | Herramienta | Qué hace |
 |---|---|
 | `ver_disponibilidad` | Reinas enjauladas, reservadas y disponibles por raza, y en qué bancos están (`raza` opcional) |
-| `buscar_pedidos` / `ver_pedido` | Pedidos por `estado` y `cliente`; un pedido con líneas, importes del sistema y reservas |
-| `listar_tandas` / `ver_tanda` | Tandas por `raza`, `desde`, `hasta`; una tanda con celdas por estado, parques y bancos |
+| `buscar_pedidos` / `ver_pedido` | Pedidos por `estado` y `cliente`; un pedido con líneas, importes del sistema, reservas y sus últimos 5 borradores con su estado |
+| `ver_borrador` | Un borrador: estado (`generando`, `borrador`, `rechazado`, `aprobado`, `descartado`), motivo y texto (cuerpo hasta 1500 caracteres), sin el hash ni quién aprobó. Solo lectura: no hay herramienta para aprobar ni descartar |
+| `listar_tandas` / `ver_tanda` | Tandas por `raza`, `estado` (`en_curso`, `cosechada`), `desde`, `hasta`, con `estado` y `fecha_salida_estimada`; una tanda con celdas por estado, parques, bancos, `introducciones` (parque, fecha, núcleos, celdas) y `resultado` de la cosecha |
 | `ver_indicadores` | KPIs de producción por tanda o por raza (`agrupar`, `desde`, `hasta`) |
 | `buscar_clientes` | Clientes por nombre, sin tildes ni mayúsculas (`incluir_inactivos` opcional) |
-| `listar_catalogo` | `razas`, `productos` (ítems vendibles), `parques`, `bancos` o `materiales` |
+| `listar_catalogo` | `razas`, `productos` (ítems vendibles), `parques`, `bancos` (con `reinas_en_banco` y `lugares_libres`; la capacidad es la del alta) o `materiales` |
 | `listar_embarques` / `listar_comprobantes` | Embarques por `estado` (con `documentos` x/6); comprobantes transcriptos por `cliente` |
 | `proponer_cliente` | → `POST /api/v1/clientes` (admin, ventas) |
 | `proponer_pedido` | → `POST /api/v1/pedidos` (admin, ventas). Nacional en ARS; exportación pide USD o EUR |
 | `proponer_reserva` | → `POST /api/v1/pedidos/{id}/reservas`, sin cuerpo (admin, ventas). Solo en borrador y si alcanza el disponible |
 | `proponer_tanda` | → `POST /api/v1/tandas` (admin, produccion). Si hay un solo material activo, usa ese |
 | `proponer_operacion_tanda` | → `POST /api/v1/tandas/{id}/operaciones` (admin, produccion): descartar, introducir, cosechar o pasar a banco |
-| `proponer_borrador` | → `POST /api/v1/documentos/borradores` (admin, ventas) |
+| `proponer_borrador` | → `POST /api/v1/documentos/borradores` (admin, ventas). `corrige_a` opcional: solo un borrador aprobado del mismo pedido |
 
 Forma de una propuesta:
 

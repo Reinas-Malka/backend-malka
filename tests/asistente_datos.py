@@ -20,14 +20,13 @@ from sqlalchemy import Connection, Engine, text
 
 from app.main import app
 from app.routers.asistente import obtener_modelo
-from tests.conftest import crear_tenant, emitir, fijar_tenant
+from tests.conftest import borrar_borradores, crear_tenant, emitir, fijar_tenant
 
 URL = "/api/v1/asistente"
 HOLA = [{"rol": "usuario", "texto": "Hola"}]
 
 # De hijas a padres, para limpiar sin chocar con las claves foraneas.
 TABLAS = (
-    "borrador",
     "llamada_ia",
     "idempotencia",
     "reserva",
@@ -219,6 +218,61 @@ def cargar_criadero(c: Connection, tenant: uuid.UUID) -> Criadero:
     )
 
 
+@dataclass(frozen=True)
+class Borradores:
+    aprobado: uuid.UUID
+    descartado: uuid.UUID
+
+
+CONTENIDO_BORRADOR = json.dumps(
+    {"encabezado": "Presupuesto", "cuerpo": "Cinco reinas Buckfast.", "notas": ""}
+)
+
+
+def cargar_borradores(
+    c: Connection, tenant: uuid.UUID, pedido: uuid.UUID
+) -> Borradores:
+    """Un borrador aprobado (el mas viejo) y uno descartado del pedido.
+
+    Directo en la base, sin S3 ni bitacora: alcanza para leer sus estados.
+    """
+    fijar_tenant(c, tenant)
+    aprobado = uuid.uuid4()
+    c.execute(
+        text(
+            "INSERT INTO borrador (id, pedido_id, estado, contenido, snapshot, "
+            "hash_contenido, pdf_s3_key, solicitado_por, creado_en) VALUES (:id, "
+            ":pedido, 'aprobado', CAST(:contenido AS jsonb), "
+            "CAST(:snapshot AS jsonb), :hash, :clave, 'usuario-1', "
+            "now() - interval '1 hour')"
+        ),
+        {
+            "id": aprobado,
+            "pedido": pedido,
+            "contenido": CONTENIDO_BORRADOR,
+            "snapshot": json.dumps(
+                {
+                    "aprobacion": {
+                        "usuario": "sub-admin",
+                        "momento": "2026-11-20T12:00:00Z",
+                    }
+                }
+            ),
+            "hash": "a" * 64,
+            "clave": f"documentos/{tenant}/borradores/{aprobado}.pdf",
+        },
+    )
+    descartado = _id(
+        c,
+        "INSERT INTO borrador (pedido_id, estado, contenido, motivo_descarte, "
+        "solicitado_por) VALUES (:pedido, 'descartado', CAST(:contenido AS jsonb), "
+        "'Falta el flete', 'usuario-1') RETURNING id",
+        pedido=pedido,
+        contenido=CONTENIDO_BORRADOR,
+    )
+    return Borradores(aprobado=aprobado, descartado=descartado)
+
+
 def cargar_ajeno(c: Connection, tenant: uuid.UUID) -> uuid.UUID:
     """Otro criadero con un cliente y un pedido propios. Devuelve el pedido."""
     crear_tenant(c, tenant)
@@ -238,6 +292,8 @@ def cargar_ajeno(c: Connection, tenant: uuid.UUID) -> uuid.UUID:
 def limpiar(motor: Engine, tenant: uuid.UUID) -> None:
     with motor.begin() as c:
         fijar_tenant(c, tenant)
+        # Los aprobados y descartados tienen un trigger que frena el DELETE.
+        borrar_borradores(c)
         for tabla in TABLAS:
             c.execute(text(f"DELETE FROM {tabla} WHERE true"))  # noqa: S608
         c.execute(text("DELETE FROM tenant WHERE id = :id"), {"id": tenant})

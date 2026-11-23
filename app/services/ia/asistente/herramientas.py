@@ -19,7 +19,7 @@ from sqlalchemy import text
 
 from app.db import sesion_de_tenant
 from app.errores import ErrorDeApi
-from app.services.ia.asistente import lectura, propuestas
+from app.services.ia.asistente import lectura, lectura_borradores, propuestas
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.resolucion import ErrorDeHerramienta
 
@@ -53,20 +53,23 @@ CATALOGO: tuple[Herramienta, ...] = (
     ),
     Herramienta(
         "ver_pedido",
-        "Un pedido con sus líneas, importes calculados por el sistema y reservas.",
+        "Un pedido con sus líneas, importes calculados por el sistema, reservas "
+        "y los últimos borradores de su documento con su estado.",
         lectura.EntradaVerPedido,
         lectura.ver_pedido,
     ),
     Herramienta(
         "listar_tandas",
-        "Tandas de cría de la más nueva a la más vieja, con su id y sus celdas "
-        "por estado. Filtros opcionales: raza y rango de fechas de traslarve.",
+        "Tandas de cría de la más nueva a la más vieja, con su id, estado "
+        "(en_curso o cosechada), fecha de salida estimada y celdas por estado. "
+        "Filtros opcionales: raza, estado y rango de fechas de traslarve.",
         lectura.EntradaListarTandas,
         lectura.listar_tandas,
     ),
     Herramienta(
         "ver_tanda",
-        "Una tanda con sus celdas por estado, en qué parques y bancos están.",
+        "Una tanda con su estado, sus celdas por estado, en qué parques y bancos "
+        "están, dónde y cuándo se introdujo y el resultado de la cosecha.",
         lectura.EntradaVerTanda,
         lectura.ver_tanda,
     ),
@@ -86,7 +89,7 @@ CATALOGO: tuple[Herramienta, ...] = (
     Herramienta(
         "listar_catalogo",
         "Catálogos del criadero: razas, productos (ítems vendibles), parques de "
-        "fecundación, bancos o materiales.",
+        "fecundación, bancos (con reinas y lugares libres) o materiales.",
         lectura.EntradaCatalogo,
         lectura.listar_catalogo,
     ),
@@ -103,6 +106,14 @@ CATALOGO: tuple[Herramienta, ...] = (
         "nombre del cliente.",
         lectura.EntradaComprobantes,
         lectura.listar_comprobantes,
+    ),
+    Herramienta(
+        "ver_borrador",
+        "Un borrador de documento: estado (generando, borrador, rechazado, "
+        "aprobado o descartado), motivo y texto. Solo lectura: aprobar o "
+        "descartar lo hace una persona desde la pantalla del pedido.",
+        lectura_borradores.EntradaVerBorrador,
+        lectura_borradores.ver_borrador,
     ),
     Herramienta(
         "proponer_cliente",

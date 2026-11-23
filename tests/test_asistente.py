@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.errores import ValidacionError
 from app.schemas.asistente import MensajeAsistente, PedidoAsistente
-from app.services.ia.asistente import herramientas
+from app.services.ia.asistente import conversacion, herramientas
 from app.services.ia.asistente.conversacion import _historial
 from app.services.ia.asistente.resolucion import (
     ErrorDeHerramienta,
@@ -98,14 +98,14 @@ def test_las_especificaciones_son_json_sin_titulos() -> None:
     texto = json.dumps(especificaciones)
     assert '"title"' not in texto
     nombres = [e["toolSpec"]["name"] for e in especificaciones]
-    assert len(nombres) == len(set(nombres)) == 16
+    assert len(nombres) == len(set(nombres)) == 17
     escritura = {h.nombre for h in herramientas.CATALOGO if h.escritura}
     assert all(nombre.startswith("proponer_") for nombre in escritura)
     assert len(escritura) == 6
 
 
 def test_el_prompt_marca_las_reglas_del_dominio() -> None:
-    prompt = cargar_prompt("asistente_v1")
+    prompt = cargar_prompt(conversacion.PROMPT_VERSION)
 
     for regla in ("<datos>", "CAE", "tipo de cambio", "confirmar", "solo reinas"):
         assert regla in prompt

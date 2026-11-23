@@ -25,14 +25,16 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from app.errores import ErrorDeApi
-from app.routers.borradores import BorradorPedido
 from app.schemas.asistente import AccionPropuesta, ParResumen, Propuesta
+from app.schemas.borradores import BorradorPedido
 from app.schemas.clientes import ClienteCrear
 from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.schemas.produccion import OperacionCrear, TandaCrear
+from app.services.ia import generacion
 from app.services.ia.asistente import resolucion
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.resolucion import ErrorDeHerramienta
+from app.services.ia.generacion import EstadoBorrador
 from app.services.produccion import repositorio_tandas
 from app.services.produccion.tandas import cupulas_para, fecha_de_traslarve_admitida
 from app.services.ventas import repositorio_disponibilidad, repositorio_pedidos
@@ -460,20 +462,51 @@ def proponer_operacion(ctx: Contexto, entrada: EntradaOperacion) -> Resultado:
 
 class EntradaBorrador(_Entrada):
     pedido_id: UUID = Field(description="Id del pedido.")
+    corrige_a: UUID | None = Field(
+        default=None,
+        description="Solo para corregir: id del borrador APROBADO del mismo "
+        "pedido (sale de ver_pedido). El aprobado no cambia.",
+    )
+
+
+def _corregido(ctx: Contexto, pedido_id: UUID, borrador_id: UUID) -> None:
+    """Lo mismo que valida el endpoint (generacion._validar_correccion),
+    antes de proponer: asi el modelo corrige sin que el usuario confirme algo
+    que va a fallar."""
+    try:
+        corregido = generacion.obtener(ctx.sesion, borrador_id)
+    except ErrorDeApi:
+        corregido = None
+    if (
+        corregido is None
+        or corregido.pedido_id != pedido_id
+        or corregido.estado != EstadoBorrador.APROBADO
+    ):
+        raise ErrorDeHerramienta(
+            "Solo se corrige un borrador aprobado del mismo pedido."
+        )
 
 
 def proponer_borrador(ctx: Contexto, entrada: EntradaBorrador) -> Resultado:
     pedido = _pedido(ctx, entrada.pedido_id)
+    if entrada.corrige_a is not None:
+        _corregido(ctx, pedido.id, entrada.corrige_a)
     adaptador = TypeAdapter(BorradorPedido)
-    cuerpo = _volcar(adaptador, _validar(adaptador, {"pedido_id": pedido.id}))
+    cuerpo = _volcar(
+        adaptador,
+        _validar(adaptador, {"pedido_id": pedido.id, "corrige_a": entrada.corrige_a}),
+    )
+    resumen = [("Pedido", _etiqueta_pedido(ctx, pedido))]
+    if entrada.corrige_a is not None:
+        resumen.append(("Corrige", "El borrador aprobado del pedido (no cambia)"))
+    resumen.append(
+        ("Qué pasa", "La IA redacta un borrador que una persona revisa y aprueba.")
+    )
     return _proponer(
         ctx,
         AccionPropuesta.PEDIR_BORRADOR,
         "/api/v1/documentos/borradores",
         cuerpo,
-        [
-            ("Pedido", _etiqueta_pedido(ctx, pedido)),
-            ("Qué pasa", "La IA redacta un borrador que una persona revisa y aprueba."),
-        ],
+        resumen,
         ROLES_VENTAS,
     )

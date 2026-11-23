@@ -27,6 +27,7 @@ from tests.asistente_datos import (
     Criadero,
     ModeloGuionado,
     cargar_ajeno,
+    cargar_borradores,
     cargar_criadero,
     como,
     conversar,
@@ -169,7 +170,7 @@ def test_el_historial_llega_alternado_y_con_el_prompt_versionado(
     assert "vende solo reinas" in pedido["system"][0]["text"]
     assert pedido["system"][1]["text"].startswith("Hoy es ")
     nombres = {t["toolSpec"]["name"] for t in pedido["toolConfig"]["tools"]}
-    assert len(nombres) == 16
+    assert len(nombres) == 17
     assert {"ver_disponibilidad", "proponer_pedido"} <= nombres
 
 
@@ -243,6 +244,49 @@ def test_ver_pedido_con_lineas_y_reservas(api: TestClient, criadero: Criadero) -
         }
     ]
     assert datos["reservas"] == []
+    assert datos["borradores"] == []
+    assert datos["hay_mas_borradores"] is False
+
+
+def test_ver_pedido_y_borrador_con_sus_estados(
+    api: TestClient, criadero: Criadero, motor_owner: Engine
+) -> None:
+    with motor_owner.begin() as c:
+        borradores = cargar_borradores(c, criadero.tenant, criadero.pedido)
+
+    pedido = leer(api, criadero, "ver_pedido", {"pedido_id": str(criadero.pedido)})
+    aprobado = leer(
+        api, criadero, "ver_borrador", {"borrador_id": str(borradores.aprobado)}
+    )
+    descartado = leer(
+        api, criadero, "ver_borrador", {"borrador_id": str(borradores.descartado)}
+    )
+
+    # Del mas nuevo al mas viejo.
+    assert [(b["id"], b["estado"]) for b in pedido["borradores"]] == [
+        (str(borradores.descartado), "descartado"),
+        (str(borradores.aprobado), "aprobado"),
+    ]
+    assert aprobado["estado"] == "aprobado"
+    assert aprobado["pdf_disponible"] is True
+    assert aprobado["aprobado_en"] is not None
+    assert aprobado["contenido"]["cuerpo"] == "Cinco reinas Buckfast."
+    assert aprobado["contenido"]["cuerpo_recortado"] is False
+    # Ni el sub de quien aprobo ni el hash: no le sirven para conversar.
+    assert "aprobado_por" not in aprobado
+    assert "hash_contenido" not in aprobado
+    assert descartado["estado"] == "descartado"
+    assert descartado["motivo_descarte"] == "Falta el flete"
+
+
+def test_ver_borrador_de_otro_criadero_no_existe(
+    api: TestClient, criadero: Criadero
+) -> None:
+    mensaje = error_de(
+        api, criadero, "ver_borrador", {"borrador_id": str(uuid.uuid4())}
+    )
+
+    assert mensaje == "No existe el borrador."
 
 
 def test_listar_y_ver_tandas(api: TestClient, criadero: Criadero) -> None:
@@ -256,10 +300,28 @@ def test_listar_y_ver_tandas(api: TestClient, criadero: Criadero) -> None:
 
     (tanda,) = lista["tandas"]
     assert tanda["celdas_por_estado"] == {"enjaulada": 50, "trasladada": 10}
+    assert tanda["estado"] == "cosechada"
+    assert tanda["fecha_salida_estimada"] == "2026-10-27"
     assert detalle["raza"] == "Buckfast"
+    assert detalle["estado"] == "cosechada"
+    assert detalle["fecha_salida_estimada"] == "2026-10-27"
     assert detalle["celdas"] == 60
     assert detalle["bancos"] == [{"banco": "B-01", "reinas": 30}]
     assert detalle["en_parques"] == []
+    assert detalle["introducciones"] == [
+        {"parque": "Parque Norte", "fecha": "2026-10-10", "nucleos": 1, "celdas": 50}
+    ]
+    assert detalle["resultado"]["introducidas"] == 50
+    assert detalle["resultado"]["cosechadas"] == 50
+    assert detalle["resultado"]["enjauladas_sin_banco"] == 20
+
+
+def test_listar_tandas_por_estado(api: TestClient, criadero: Criadero) -> None:
+    en_curso = leer(api, criadero, "listar_tandas", {"estado": "en_curso"})
+    cosechadas = leer(api, criadero, "listar_tandas", {"estado": "cosechada"})
+
+    assert [t["raza"] for t in en_curso["tandas"]] == ["Carniola"]
+    assert [t["raza"] for t in cosechadas["tandas"]] == ["Buckfast"]
 
 
 def test_indicadores_por_tanda_y_por_raza(api: TestClient, criadero: Criadero) -> None:
@@ -320,6 +382,22 @@ def test_listar_catalogo(
     datos = leer(api, criadero, "listar_catalogo", {"catalogo": catalogo})
 
     assert [fila[campo] for fila in datos[catalogo]] == esperados
+
+
+def test_los_bancos_dicen_cuantas_reinas_mas_entran(
+    api: TestClient, criadero: Criadero
+) -> None:
+    datos = leer(api, criadero, "listar_catalogo", {"catalogo": "bancos"})
+
+    assert datos["bancos"] == [
+        {
+            "identificador": "B-01",
+            "capacidad_max": 276,
+            "reinas_en_banco": 30,
+            "lugares_libres": 246,
+            "activo": True,
+        }
+    ]
 
 
 def test_listar_embarques_y_comprobantes(api: TestClient, criadero: Criadero) -> None:

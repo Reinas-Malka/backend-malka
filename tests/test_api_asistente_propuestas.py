@@ -21,8 +21,9 @@ from sqlalchemy import Engine, text
 
 from app.fechas import hoy
 from app.main import app
-from app.routers.borradores import BorradorPedido, obtener_cola
+from app.routers.borradores import obtener_cola
 from app.schemas.asistente import Propuesta
+from app.schemas.borradores import BorradorPedido
 from app.schemas.clientes import ClienteCrear
 from app.schemas.pedidos import PedidoCrear
 from app.schemas.produccion import OperacionCrear, TandaCrear
@@ -31,6 +32,7 @@ from tests.asistente_datos import (
     FECHA_TANDA,
     Criadero,
     ModeloGuionado,
+    cargar_borradores,
     cargar_criadero,
     como,
     conversar,
@@ -621,6 +623,47 @@ def test_borrador_confirmable(
     assert resumen(propuesta)["Pedido"] == "Apícola del Sur, entrega 2026-12-01"
     assert confirmar(api, criadero, propuesta, "ventas").status_code == 202
     assert len(cola.mensajes) == 1
+
+
+def test_borrador_que_corrige_uno_aprobado_es_confirmable(
+    api: TestClient, criadero: Criadero, cola: ColaFalsa, motor_owner: Engine
+) -> None:
+    with motor_owner.begin() as c:
+        borradores = cargar_borradores(c, criadero.tenant, criadero.pedido)
+
+    propuesta, _ = proponer(
+        api,
+        criadero,
+        "proponer_borrador",
+        {"pedido_id": str(criadero.pedido), "corrige_a": str(borradores.aprobado)},
+    )
+
+    assert propuesta["cuerpo"] == {
+        "pedido_id": str(criadero.pedido),
+        "corrige_a": str(borradores.aprobado),
+    }
+    assert "Corrige" in resumen(propuesta)
+    respuesta = confirmar(api, criadero, propuesta, "ventas")
+    assert respuesta.status_code == 202, respuesta.json()
+    assert respuesta.json()["corrige_a"] == str(borradores.aprobado)
+
+
+@pytest.mark.parametrize("cual", ["descartado", "inexistente"])
+def test_solo_se_propone_corregir_un_borrador_aprobado(
+    api: TestClient, criadero: Criadero, motor_owner: Engine, cual: str
+) -> None:
+    with motor_owner.begin() as c:
+        borradores = cargar_borradores(c, criadero.tenant, criadero.pedido)
+    corrige_a = borradores.descartado if cual == "descartado" else uuid.uuid4()
+
+    mensaje = error_de(
+        api,
+        criadero,
+        "proponer_borrador",
+        {"pedido_id": str(criadero.pedido), "corrige_a": str(corrige_a)},
+    )
+
+    assert mensaje == "Solo se corrige un borrador aprobado del mismo pedido."
 
 
 # --- nada se escribe sin confirmar ---

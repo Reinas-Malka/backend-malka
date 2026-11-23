@@ -51,7 +51,8 @@ from app.services.ia.prompts import cargar_prompt
 logger = logging.getLogger("malka")
 
 # v1 (08/11): primera version del asistente con herramientas.
-PROMPT_VERSION = "asistente_v1"
+# v2 (22/11): estados del borrador (aprobado, descartado) y de la tanda.
+PROMPT_VERSION = "asistente_v2"
 
 MAX_RONDAS_DE_HERRAMIENTAS = 4
 # Respuestas breves: con 1000 tokens sobra y una respuesta desbocada se corta.
