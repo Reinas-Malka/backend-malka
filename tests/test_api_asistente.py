@@ -170,7 +170,7 @@ def test_el_historial_llega_alternado_y_con_el_prompt_versionado(
     assert "vende solo reinas" in pedido["system"][0]["text"]
     assert pedido["system"][1]["text"].startswith("Hoy es ")
     nombres = {t["toolSpec"]["name"] for t in pedido["toolConfig"]["tools"]}
-    assert len(nombres) == 17
+    assert len(nombres) == 25
     assert {"ver_disponibilidad", "proponer_pedido"} <= nombres
 
 

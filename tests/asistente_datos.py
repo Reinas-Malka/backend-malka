@@ -20,6 +20,7 @@ from sqlalchemy import Connection, Engine, text
 
 from app.main import app
 from app.routers.asistente import obtener_modelo
+from app.schemas.asistente import Propuesta
 from tests.conftest import borrar_borradores, crear_tenant, emitir, fijar_tenant
 
 URL = "/api/v1/asistente"
@@ -426,3 +427,41 @@ def error_de(
     assert cuerpo["propuestas"] == []
     mensaje: str = datos_de(resultado)["error"]
     return mensaje
+
+
+# --- propuestas ---
+
+
+def proponer(
+    api: TestClient,
+    criadero: Criadero,
+    nombre: str,
+    entrada: dict[str, Any],
+    rol: str = "admin",
+) -> tuple[dict[str, Any], Any]:
+    """La propuesta que devolvio la herramienta y lo que vio el modelo."""
+    cuerpo, resultado = usar(api, criadero, nombre, entrada, rol=rol)
+    assert resultado["status"] == "success", datos_de(resultado)
+    (propuesta,) = cuerpo["propuestas"]
+    Propuesta.model_validate(propuesta)
+    assert cuerpo["consultas"] == []
+    return propuesta, datos_de(resultado)
+
+
+def confirmar(
+    api: TestClient, criadero: Criadero, propuesta: dict[str, Any], rol: str
+) -> Response:
+    """Lo que hace el front: el endpoint de la propuesta, con su token."""
+    headers = {**como(criadero.tenant, rol), "Idempotency-Key": propuesta["id"]}
+    if propuesta["cuerpo"] is None:
+        return api.request(propuesta["metodo"], propuesta["ruta"], headers=headers)
+    return api.request(
+        propuesta["metodo"],
+        propuesta["ruta"],
+        json=propuesta["cuerpo"],
+        headers=headers,
+    )
+
+
+def resumen(propuesta: dict[str, Any]) -> dict[str, str]:
+    return {par["etiqueta"]: par["valor"] for par in propuesta["resumen"]}

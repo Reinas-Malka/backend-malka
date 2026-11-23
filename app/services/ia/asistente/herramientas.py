@@ -19,7 +19,12 @@ from sqlalchemy import text
 
 from app.db import sesion_de_tenant
 from app.errores import ErrorDeApi
-from app.services.ia.asistente import lectura, lectura_borradores, propuestas
+from app.services.ia.asistente import (
+    lectura,
+    lectura_borradores,
+    propuestas,
+    propuestas_catalogos,
+)
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.resolucion import ErrorDeHerramienta
 
@@ -161,6 +166,75 @@ CATALOGO: tuple[Herramienta, ...] = (
         "pedido. No lo pide: el usuario confirma.",
         propuestas.EntradaBorrador,
         propuestas.proponer_borrador,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_cancelacion_pedido",
+        "Arma la propuesta de cancelar un pedido en borrador o reservado (libera "
+        "sus reservas). Cancelar es final. Acepta el id del pedido o el nombre "
+        "del cliente si tiene uno solo cancelable. No lo cancela: el usuario "
+        "confirma.",
+        propuestas.EntradaCancelacion,
+        propuestas.proponer_cancelacion,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_parque",
+        "Arma la propuesta de alta de un parque de fecundación (nombre, "
+        "ubicación, capacidad en núcleos). Se crea sin núcleos. No lo crea: el "
+        "usuario confirma.",
+        propuestas_catalogos.EntradaParque,
+        propuestas_catalogos.proponer_parque,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_nucleos",
+        "Arma la propuesta de agregar N núcleos a un parque que YA existe (por "
+        "nombre o id); el sistema elige fila y posiciones. Si el parque todavía "
+        "no existe, primero proponé el parque. No los crea: el usuario confirma.",
+        propuestas_catalogos.EntradaNucleos,
+        propuestas_catalogos.proponer_nucleos,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_banco",
+        "Arma la propuesta de alta de un banco de reinas. Sin datos: el "
+        "identificador (B-NN) y la capacidad los asigna el sistema. No lo crea: "
+        "el usuario confirma.",
+        propuestas_catalogos.EntradaBanco,
+        propuestas_catalogos.proponer_banco,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_raza",
+        "Arma la propuesta de alta de una raza. No la crea: el usuario confirma.",
+        propuestas_catalogos.EntradaRaza,
+        propuestas_catalogos.proponer_raza,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_producto",
+        "Arma la propuesta de alta de un producto (ítem vendible: siempre "
+        "reinas, la raza va en cada línea del pedido). No lo crea: el usuario "
+        "confirma.",
+        propuestas_catalogos.EntradaProducto,
+        propuestas_catalogos.proponer_producto,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_material",
+        "Arma la propuesta de alta de un material (nombre y unidad). No lo "
+        "crea: el usuario confirma.",
+        propuestas_catalogos.EntradaMaterial,
+        propuestas_catalogos.proponer_material,
+        escritura=True,
+    ),
+    Herramienta(
+        "proponer_movimiento_material",
+        "Arma la propuesta de registrar una compra o un ajuste de stock de un "
+        "material (por nombre). No lo registra: el usuario confirma.",
+        propuestas_catalogos.EntradaMovimiento,
+        propuestas_catalogos.proponer_movimiento,
         escritura=True,
     ),
 )

@@ -25,11 +25,13 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from app.errores import ErrorDeApi
+from app.paginacion import ParametrosDePagina
 from app.schemas.asistente import AccionPropuesta, ParResumen, Propuesta
 from app.schemas.borradores import BorradorPedido
 from app.schemas.clientes import ClienteCrear
 from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.schemas.produccion import OperacionCrear, TandaCrear
+from app.schemas.transiciones import CambioDeEstado
 from app.services.ia import generacion
 from app.services.ia.asistente import resolucion
 from app.services.ia.asistente.base import Contexto, Resultado
@@ -40,6 +42,7 @@ from app.services.produccion.tandas import cupulas_para, fecha_de_traslarve_admi
 from app.services.ventas import repositorio_disponibilidad, repositorio_pedidos
 from app.services.ventas.clientes import CondicionIva, TipoCliente
 from app.services.ventas.pedidos import EstadoPedido, Incoterm, Moneda, validar_pedido
+from app.services.ventas.transiciones import puede_pasar
 
 # Los mismos roles que exige cada endpoint (require_role en app/routers/).
 ROLES_VENTAS = ["admin", "ventas"]
@@ -53,11 +56,11 @@ NOTA = (
 _OPERACION: TypeAdapter[Any] = TypeAdapter(OperacionCrear)
 
 
-class _Entrada(BaseModel):
+class EntradaPropuesta(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-def _validar(adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]) -> Any:
+def validar_cuerpo(adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]) -> Any:
     """Valida el cuerpo como lo va a recibir el endpoint: en JSON.
 
     El error que vuelve al modelo dice el campo y la regla, sin el valor.
@@ -72,14 +75,28 @@ def _validar(adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]) -> Any:
         raise ErrorDeHerramienta(f"Los datos no son válidos: {problemas}") from None
 
 
-def _volcar(adaptador: TypeAdapter[Any], validado: Any) -> dict[str, Any]:
+def exigir(faltantes: dict[str, object]) -> None:
+    """ErrorDeHerramienta con los datos obligatorios que no vinieron.
+
+    Las entradas dejan opcionales los datos que el modelo no puede deducir,
+    asi puede llamar sin inventarlos y la herramienta le dice que preguntar.
+    """
+    faltan = [que for que, valor in faltantes.items() if valor is None]
+    if faltan:
+        raise ErrorDeHerramienta(
+            f"Faltan datos obligatorios: {', '.join(faltan)}. Preguntale al "
+            "usuario; no los completes por tu cuenta."
+        )
+
+
+def volcar_cuerpo(adaptador: TypeAdapter[Any], validado: Any) -> dict[str, Any]:
     cuerpo: dict[str, Any] = adaptador.dump_python(
         validado, mode="json", exclude_none=True
     )
     return cuerpo
 
 
-def _proponer(
+def armar_propuesta(
     ctx: Contexto,
     accion: AccionPropuesta,
     ruta: str,
@@ -122,7 +139,7 @@ def _etiqueta_pedido(ctx: Contexto, pedido: PedidoRespuesta) -> str:
 # --- crear_cliente ---
 
 
-class EntradaCliente(_Entrada):
+class EntradaCliente(EntradaPropuesta):
     nombre: str = Field(description="Nombre o razón social.")
     pais: str = Field(description="Código ISO de 2 letras (AR para nacionales).")
     tipo: TipoCliente
@@ -134,12 +151,12 @@ class EntradaCliente(_Entrada):
 
 def proponer_cliente(ctx: Contexto, entrada: EntradaCliente) -> Resultado:
     adaptador = TypeAdapter(ClienteCrear)
-    cliente = _validar(adaptador, entrada.model_dump(mode="json"))
-    return _proponer(
+    cliente = validar_cuerpo(adaptador, entrada.model_dump(mode="json"))
+    return armar_propuesta(
         ctx,
         AccionPropuesta.CREAR_CLIENTE,
         "/api/v1/clientes",
-        _volcar(adaptador, cliente),
+        volcar_cuerpo(adaptador, cliente),
         [
             ("Nombre", cliente.nombre),
             ("País", cliente.pais),
@@ -154,7 +171,7 @@ def proponer_cliente(ctx: Contexto, entrada: EntradaCliente) -> Resultado:
 # --- crear_pedido ---
 
 
-class LineaPropuesta(_Entrada):
+class LineaPropuesta(EntradaPropuesta):
     producto: str = Field(description="Nombre del ítem vendible.")
     raza: str = Field(description="Nombre de la raza.")
     cantidad: int = Field(description="Cantidad de reinas.")
@@ -163,7 +180,7 @@ class LineaPropuesta(_Entrada):
     )
 
 
-class EntradaPedido(_Entrada):
+class EntradaPedido(EntradaPropuesta):
     cliente: str = Field(description="Nombre del cliente.")
     fecha_entrega_solicitada: date = Field(description="AAAA-MM-DD.")
     items: list[LineaPropuesta] = Field(min_length=1)
@@ -206,7 +223,7 @@ def proponer_pedido(ctx: Contexto, entrada: EntradaPedido) -> Resultado:
         for linea in entrada.items
     ]
     adaptador = TypeAdapter(PedidoCrear)
-    pedido = _validar(
+    pedido = validar_cuerpo(
         adaptador,
         {
             "cliente_id": cliente.id,
@@ -247,11 +264,11 @@ def proponer_pedido(ctx: Contexto, entrada: EntradaPedido) -> Resultado:
                 f"{item.precio_unitario} {pedido.moneda.value} c/u",
             )
         )
-    return _proponer(
+    return armar_propuesta(
         ctx,
         AccionPropuesta.CREAR_PEDIDO,
         "/api/v1/pedidos",
-        _volcar(adaptador, pedido),
+        volcar_cuerpo(adaptador, pedido),
         resumen,
         ROLES_VENTAS,
     )
@@ -260,7 +277,7 @@ def proponer_pedido(ctx: Contexto, entrada: EntradaPedido) -> Resultado:
 # --- reservar_pedido ---
 
 
-class EntradaReserva(_Entrada):
+class EntradaReserva(EntradaPropuesta):
     pedido_id: UUID = Field(description="Id del pedido en borrador.")
 
 
@@ -291,7 +308,7 @@ def proponer_reserva(ctx: Contexto, entrada: EntradaReserva) -> Resultado:
         raise ErrorDeHerramienta(
             "No alcanza la disponibilidad para reservar: " + "; ".join(faltan) + "."
         )
-    return _proponer(
+    return armar_propuesta(
         ctx,
         AccionPropuesta.RESERVAR_PEDIDO,
         f"/api/v1/pedidos/{pedido.id}/reservas",
@@ -304,7 +321,7 @@ def proponer_reserva(ctx: Contexto, entrada: EntradaReserva) -> Resultado:
 # --- crear_tanda ---
 
 
-class EntradaTanda(_Entrada):
+class EntradaTanda(EntradaPropuesta):
     raza: str = Field(description="Nombre de la raza.")
     fecha_traslarve: date = Field(description="AAAA-MM-DD, no futura.")
     cuadros: int = Field(description="Cuadros de madera: 1, 2 o 3.")
@@ -336,7 +353,7 @@ def proponer_tanda(ctx: Contexto, entrada: EntradaTanda) -> Resultado:
     raza = resolucion.resolver(entrada.raza, resolucion.razas(ctx.sesion), "la raza")
     material = _material(ctx, entrada.material)
     adaptador = TypeAdapter(TandaCrear)
-    tanda = _validar(
+    tanda = validar_cuerpo(
         adaptador,
         {
             "raza_id": raza.id,
@@ -374,11 +391,11 @@ def proponer_tanda(ctx: Contexto, entrada: EntradaTanda) -> Resultado:
         )
     if tanda.retroactivo:
         resumen.append(("Retroactiva", "sí"))
-    return _proponer(
+    return armar_propuesta(
         ctx,
         AccionPropuesta.CREAR_TANDA,
         "/api/v1/tandas",
-        _volcar(adaptador, tanda),
+        volcar_cuerpo(adaptador, tanda),
         resumen,
         ROLES_PRODUCCION,
     )
@@ -389,7 +406,7 @@ def proponer_tanda(ctx: Contexto, entrada: EntradaTanda) -> Resultado:
 AccionTanda = Literal["descartar", "introducir", "cosechar", "pasar_a_banco"]
 
 
-class EntradaOperacion(_Entrada):
+class EntradaOperacion(EntradaPropuesta):
     tanda_id: UUID = Field(description="Id de la tanda (sale de listar_tandas).")
     accion: AccionTanda
     cantidad: int = Field(description="Celdas o reinas del lote.")
@@ -433,7 +450,7 @@ def proponer_operacion(ctx: Contexto, entrada: EntradaOperacion) -> Resultado:
     except ErrorDeApi as error:
         raise ErrorDeHerramienta(error.message) from None
     cuerpo, extra = _cuerpo_operacion(ctx, entrada)
-    operacion = _validar(_OPERACION, cuerpo)
+    operacion = validar_cuerpo(_OPERACION, cuerpo)
     raza = {
         o.id: o.nombre for o in resolucion.razas(ctx.sesion, incluir_inactivas=True)
     }
@@ -447,11 +464,11 @@ def proponer_operacion(ctx: Contexto, entrada: EntradaOperacion) -> Resultado:
     ]
     if getattr(operacion, "fecha", None) is not None:
         resumen.append(("Fecha", operacion.fecha.isoformat()))
-    return _proponer(
+    return armar_propuesta(
         ctx,
         AccionPropuesta.OPERAR_TANDA,
         f"/api/v1/tandas/{tanda.id}/operaciones",
-        _volcar(_OPERACION, operacion),
+        volcar_cuerpo(_OPERACION, operacion),
         resumen + extra,
         ROLES_PRODUCCION,
     )
@@ -460,7 +477,7 @@ def proponer_operacion(ctx: Contexto, entrada: EntradaOperacion) -> Resultado:
 # --- pedir_borrador ---
 
 
-class EntradaBorrador(_Entrada):
+class EntradaBorrador(EntradaPropuesta):
     pedido_id: UUID = Field(description="Id del pedido.")
     corrige_a: UUID | None = Field(
         default=None,
@@ -492,9 +509,11 @@ def proponer_borrador(ctx: Contexto, entrada: EntradaBorrador) -> Resultado:
     if entrada.corrige_a is not None:
         _corregido(ctx, pedido.id, entrada.corrige_a)
     adaptador = TypeAdapter(BorradorPedido)
-    cuerpo = _volcar(
+    cuerpo = volcar_cuerpo(
         adaptador,
-        _validar(adaptador, {"pedido_id": pedido.id, "corrige_a": entrada.corrige_a}),
+        validar_cuerpo(
+            adaptador, {"pedido_id": pedido.id, "corrige_a": entrada.corrige_a}
+        ),
     )
     resumen = [("Pedido", _etiqueta_pedido(ctx, pedido))]
     if entrada.corrige_a is not None:
@@ -502,10 +521,96 @@ def proponer_borrador(ctx: Contexto, entrada: EntradaBorrador) -> Resultado:
     resumen.append(
         ("Qué pasa", "La IA redacta un borrador que una persona revisa y aprueba.")
     )
-    return _proponer(
+    return armar_propuesta(
         ctx,
         AccionPropuesta.PEDIR_BORRADOR,
         "/api/v1/documentos/borradores",
+        cuerpo,
+        resumen,
+        ROLES_VENTAS,
+    )
+
+
+# --- cancelar_pedido ---
+
+_CAMBIO_DE_ESTADO: TypeAdapter[Any] = TypeAdapter(CambioDeEstado)
+CANCELABLES = (EstadoPedido.BORRADOR, EstadoPedido.RESERVADO)
+# Pedidos de un cliente que se miran para resolver "el pedido de X".
+PAGINA_PEDIDOS = ParametrosDePagina(limite=50, cursor=None)
+
+
+class EntradaCancelacion(EntradaPropuesta):
+    pedido_id: UUID | None = Field(
+        default=None, description="Id del pedido (sale de buscar_pedidos)."
+    )
+    cliente: str | None = Field(
+        default=None,
+        description="Nombre del cliente, si el usuario no dio el pedido: sirve "
+        "cuando tiene un solo pedido en borrador o reservado.",
+    )
+
+
+def _pedido_a_cancelar(ctx: Contexto, entrada: EntradaCancelacion) -> PedidoRespuesta:
+    """El pedido por id o, si el cliente tiene uno solo cancelable, ese."""
+    if entrada.pedido_id is not None:
+        return _pedido(ctx, entrada.pedido_id)
+    exigir({"el pedido (o el cliente del pedido)": entrada.cliente})
+    assert entrada.cliente is not None
+    cliente = resolucion.cliente(ctx.sesion, entrada.cliente, incluir_inactivos=True)
+    pagina = repositorio_pedidos.listar(
+        ctx.sesion, PAGINA_PEDIDOS, cliente_id=cliente.id
+    )
+    cancelables = [p for p in pagina.items if p.estado in CANCELABLES]
+    if len(cancelables) == 1:
+        return cancelables[0]
+    if not cancelables:
+        raise ErrorDeHerramienta(
+            f"{cliente.nombre} no tiene pedidos en borrador ni reservados: no "
+            "hay nada que cancelar."
+        )
+    opciones = "; ".join(
+        f"id {p.id} ({p.estado.value}, entrega "
+        f"{p.fecha_entrega_solicitada.isoformat()})"
+        for p in cancelables[: resolucion.MAX_OPCIONES_EN_ERROR]
+    )
+    raise ErrorDeHerramienta(
+        f"{cliente.nombre} tiene {len(cancelables)} pedidos que se pueden "
+        f"cancelar: {opciones}. Preguntale al usuario cuál."
+    )
+
+
+def proponer_cancelacion(ctx: Contexto, entrada: EntradaCancelacion) -> Resultado:
+    pedido = _pedido_a_cancelar(ctx, entrada)
+    # La misma regla que aplica el repositorio al cambiar el estado (#36).
+    if not puede_pasar(pedido.estado, EstadoPedido.CANCELADO):
+        raise ErrorDeHerramienta(
+            f"El pedido está {pedido.estado.value}: solo se cancela uno en "
+            "borrador o reservado."
+        )
+    cuerpo = volcar_cuerpo(
+        _CAMBIO_DE_ESTADO,
+        validar_cuerpo(_CAMBIO_DE_ESTADO, {"estado": EstadoPedido.CANCELADO}),
+    )
+    reinas = sum(linea.cantidad for linea in pedido.items)
+    resumen = [
+        ("Pedido", _etiqueta_pedido(ctx, pedido)),
+        ("Estado actual", pedido.estado.value),
+        ("Reinas del pedido", str(reinas)),
+    ]
+    if pedido.estado == EstadoPedido.RESERVADO:
+        resumen.append(
+            ("Reservas", "Se liberan: esas reinas vuelven a estar disponibles.")
+        )
+    resumen.append(
+        (
+            "Atención",
+            "Cancelar es final: el pedido no se puede reactivar ni editar después.",
+        )
+    )
+    return armar_propuesta(
+        ctx,
+        AccionPropuesta.CANCELAR_PEDIDO,
+        f"/api/v1/pedidos/{pedido.id}/estado",
         cuerpo,
         resumen,
         ROLES_VENTAS,
