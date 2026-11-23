@@ -164,7 +164,28 @@ def test_cada_llamada_reserva_y_anota_sus_tokens(
     assert respuesta.status_code == 200
     filas = llamadas_ia(motor_owner, criadero.tenant)
     assert [(f.tokens_entrada, f.tokens_salida) for f in filas] == [(120, 30)] * 2
-    assert {f.motivo for f in filas} == {conversacion.MOTIVO_LIMITE}
+    assert {f.motivo for f in filas} == {"asistente"}
+
+
+def test_el_asistente_comparte_el_tope_con_el_borrador(
+    api: TestClient,
+    criadero: Criadero,
+    motor_owner: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """El tope es por criadero, no por uso: una llamada del borrador en el
+    ultimo minuto ya ocupa el unico lugar."""
+    monkeypatch.setenv("IA_LLAMADAS_POR_MINUTO", "1")
+    with motor_owner.begin() as c:
+        fijar_tenant(c, criadero.tenant)
+        c.execute(text("INSERT INTO llamada_ia (motivo) VALUES ('borrador')"))
+    modelo = ModeloGuionado([responde("no llega")])
+
+    respuesta = conversar(api, criadero, modelo)
+
+    assert respuesta.status_code == 429
+    assert respuesta.json()["error"]["code"] == "limite_ia_por_minuto"
+    assert modelo.pedidos == []
 
 
 def test_pasado_el_limite_de_ia_es_429_con_retry_after(

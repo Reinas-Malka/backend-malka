@@ -65,11 +65,11 @@ TIMEOUT_CONEXION_S = 2
 TIMEOUT_LECTURA_S = 9
 TIEMPO_MAXIMO_LLAMADA_S = TIMEOUT_CONEXION_S + TIMEOUT_LECTURA_S
 
-# PENDIENTE: el CHECK ck_llamada_ia_motivo (migracion 0015) solo admite
-# "borrador". Sumar "asistente" necesita una migracion, que queda para
-# despues de la 0018 (#154) para no abrir dos cabezas. Mientras tanto las
-# llamadas del asistente cuentan en el mismo limite con ese motivo.
-MOTIVO_LIMITE = "borrador"
+# Motivo de llamada_ia (CHECK ck_llamada_ia_motivo, migracion 0019): separa
+# el consumo del asistente del del borrador. El tope por minuto y por dia es
+# uno solo por criadero y lo comparten los dos usos: reservar_llamada cuenta
+# todas las llamadas del criadero sin mirar el motivo (limites.py).
+MOTIVO_LIMITE = "asistente"
 
 AVISO_RONDAS = (
     "(Corté la búsqueda: hacía falta consultar más datos de los que puedo en "

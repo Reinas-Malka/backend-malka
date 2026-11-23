@@ -15,6 +15,11 @@ Quien use la IA reserva la llamada ANTES de encolarla o hacerla
 (reservar_llamada, 429 si no hay cupo) y anota lo consumido despues
 (registrar_consumo, que tambien emite la metrica por criadero).
 
+Los topes son por criadero, no por uso: el borrador y el asistente
+conversacional comparten el mismo cupo. El motivo de cada fila
+('borrador' o 'asistente', CHECK de la 0019) solo sirve para separar el
+consumo despues.
+
 Los topes se configuran por entorno (IA_LLAMADAS_POR_MINUTO,
 IA_LLAMADAS_POR_DIA). Un valor mal escrito nunca deja la IA sin limite:
 cae al valor por defecto.
