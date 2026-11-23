@@ -183,7 +183,9 @@ def test_el_prompt_v3_explica_los_pasos_y_los_resultados() -> None:
     prompt = cargar_prompt("asistente_v3")
 
     for frase in (
-        "de a UN paso",
+        "proponelas TODAS en la misma respuesta",
+        "propuesta_id",
+        "Hasta 10 propuestas",
         "resultado confirmado",
         "proponer_nucleos",
         "Cancelar es final",

@@ -18,31 +18,21 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from app.errores import ErrorDeApi
-from app.paginacion import ParametrosDePagina
 from app.schemas.asistente import AccionPropuesta, ParResumen, Propuesta
-from app.schemas.borradores import BorradorPedido
 from app.schemas.clientes import ClienteCrear
-from app.schemas.pedidos import PedidoCrear, PedidoRespuesta
 from app.schemas.produccion import OperacionCrear, TandaCrear
-from app.schemas.transiciones import CambioDeEstado
-from app.services.ia import generacion
-from app.services.ia.asistente import resolucion
+from app.services.ia.asistente import plan, resolucion
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.resolucion import ErrorDeHerramienta
-from app.services.ia.generacion import EstadoBorrador
 from app.services.produccion import repositorio_tandas
 from app.services.produccion.tandas import cupulas_para, fecha_de_traslarve_admitida
-from app.services.ventas import repositorio_disponibilidad, repositorio_pedidos
 from app.services.ventas.clientes import CondicionIva, TipoCliente
-from app.services.ventas.pedidos import EstadoPedido, Incoterm, Moneda, validar_pedido
-from app.services.ventas.transiciones import puede_pasar
 
 # Los mismos roles que exige cada endpoint (require_role en app/routers/).
 ROLES_VENTAS = ["admin", "ventas"]
@@ -104,6 +94,12 @@ def armar_propuesta(
     resumen: list[tuple[str, str]],
     roles: list[str],
 ) -> Resultado:
+    if len(ctx.pendientes) >= plan.MAX_PROPUESTAS:
+        raise ErrorDeHerramienta(
+            f"Ya hay {plan.MAX_PROPUESTAS} propuestas en este turno, el tope. "
+            "Decile al usuario que confirme estas y proponé el resto después."
+        )
+    depende_de = plan.dependencias(ruta, cuerpo)
     propuesta = Propuesta(
         id=uuid4(),
         accion=accion,
@@ -111,29 +107,36 @@ def armar_propuesta(
         cuerpo=cuerpo,
         resumen=[ParResumen(etiqueta=e, valor=v) for e, v in resumen],
         roles_permitidos=roles,
+        paso=len(ctx.pendientes) + 1,
+        depende_de=depende_de,
     )
     datos = {
         "propuesta_id": propuesta.id,
         "accion": accion,
+        "paso": propuesta.paso,
         "resumen": {par.etiqueta: par.valor for par in propuesta.resumen},
         # Si no puede, el boton aparece deshabilitado: conviene avisarle.
         "el_usuario_puede_confirmarla": bool(ctx.grupos & set(roles)),
         "nota": NOTA,
     }
+    if depende_de:
+        pasos = {p.id: p.paso for p in ctx.pendientes}
+        datos["depende_de_los_pasos"] = [pasos.get(i) for i in depende_de]
     return Resultado(datos, f"Propuse {accion.value.replace('_', ' ')}", propuesta)
 
 
-def _pedido(ctx: Contexto, pedido_id: UUID) -> PedidoRespuesta:
-    try:
-        return repositorio_pedidos.obtener(ctx.sesion, pedido_id)
-    except ErrorDeApi as error:
-        raise ErrorDeHerramienta(error.message) from None
-
-
-def _etiqueta_pedido(ctx: Contexto, pedido: PedidoRespuesta) -> str:
-    nombres = resolucion.nombres_de_clientes(ctx.sesion, [pedido.cliente_id])
-    cliente = nombres.get(pedido.cliente_id, "?")
-    return f"{cliente}, entrega {pedido.fecha_entrega_solicitada.isoformat()}"
+def validar_con_referencias(
+    adaptador: TypeAdapter[Any], cuerpo: dict[str, Any]
+) -> tuple[Any, dict[str, Any]]:
+    """Valida un cuerpo que puede traer marcadores {{ref:...}} de pasos del
+    mismo turno: cada uno se cambia por un uuid de prueba para validar
+    contra el schema real, y el cuerpo que vuelve los tiene de nuevo."""
+    prueba, inverso = plan.con_uuids_de_prueba(cuerpo)
+    validado = validar_cuerpo(adaptador, prueba)
+    volcado: dict[str, Any] = plan.sustituir(
+        volcar_cuerpo(adaptador, validado), inverso
+    )
+    return validado, volcado
 
 
 # --- crear_cliente ---
@@ -164,156 +167,6 @@ def proponer_cliente(ctx: Contexto, entrada: EntradaCliente) -> Resultado:
             ("Condición frente al IVA", cliente.condicion_iva.value),
             ("CUIT o tax id", cliente.cuit_o_tax_id),
         ],
-        ROLES_VENTAS,
-    )
-
-
-# --- crear_pedido ---
-
-
-class LineaPropuesta(EntradaPropuesta):
-    producto: str = Field(description="Nombre del ítem vendible.")
-    raza: str = Field(description="Nombre de la raza.")
-    cantidad: int = Field(description="Cantidad de reinas.")
-    precio_unitario: Decimal = Field(
-        description="Precio por reina que dijo el usuario (no hay lista de precios)."
-    )
-
-
-class EntradaPedido(EntradaPropuesta):
-    cliente: str = Field(description="Nombre del cliente.")
-    fecha_entrega_solicitada: date = Field(description="AAAA-MM-DD.")
-    items: list[LineaPropuesta] = Field(min_length=1)
-    moneda: Moneda | None = Field(
-        default=None,
-        description="Nacional: ARS (se completa sola). Exportación: USD o EUR.",
-    )
-    destino_pais: str | None = Field(
-        default=None, description="Solo exportación: país ISO de 2 letras."
-    )
-    incoterm: Incoterm | None = Field(
-        default=None, description="Solo exportación, opcional."
-    )
-
-
-def _moneda(tipo: TipoCliente, moneda: Moneda | None) -> Moneda:
-    """Nacional va en ARS; exportacion en USD o EUR, y eso lo dice el usuario."""
-    if moneda is not None:
-        return moneda
-    if tipo == TipoCliente.NACIONAL:
-        return Moneda.ARS
-    raise ErrorDeHerramienta(
-        "Falta la moneda: un pedido de exportación va en USD o en EUR. "
-        "Preguntale al usuario."
-    )
-
-
-def proponer_pedido(ctx: Contexto, entrada: EntradaPedido) -> Resultado:
-    cliente = resolucion.cliente(ctx.sesion, entrada.cliente)
-    tipo = TipoCliente(cliente.tipo)
-    moneda = _moneda(tipo, entrada.moneda)
-    productos = resolucion.productos(ctx.sesion)
-    razas = resolucion.razas(ctx.sesion)
-    lineas = [
-        (
-            resolucion.resolver(linea.producto, productos, "el producto"),
-            resolucion.resolver(linea.raza, razas, "la raza"),
-            linea,
-        )
-        for linea in entrada.items
-    ]
-    adaptador = TypeAdapter(PedidoCrear)
-    pedido = validar_cuerpo(
-        adaptador,
-        {
-            "cliente_id": cliente.id,
-            "moneda": moneda,
-            "destino_pais": entrada.destino_pais,
-            "incoterm": entrada.incoterm,
-            "fecha_entrega_solicitada": entrada.fecha_entrega_solicitada,
-            "items": [
-                {
-                    "item_vendible_id": producto.id,
-                    "raza_id": raza.id,
-                    "cantidad": linea.cantidad,
-                    "precio_unitario": linea.precio_unitario,
-                }
-                for producto, raza, linea in lineas
-            ],
-        },
-    )
-    # La misma regla que aplica el repositorio al crear (dominio, Pedidos).
-    try:
-        validar_pedido(tipo, pedido.moneda, pedido.destino_pais, pedido.incoterm)
-    except ValueError as error:
-        raise ErrorDeHerramienta(str(error)) from None
-
-    resumen = [("Cliente", cliente.nombre), ("Moneda", pedido.moneda.value)]
-    if pedido.destino_pais:
-        resumen.append(("Destino", pedido.destino_pais))
-    if pedido.incoterm:
-        resumen.append(("Incoterm", pedido.incoterm.value))
-    resumen.append(("Entrega solicitada", pedido.fecha_entrega_solicitada.isoformat()))
-    for numero, ((producto, raza, _), item) in enumerate(
-        zip(lineas, pedido.items, strict=True), start=1
-    ):
-        resumen.append(
-            (
-                f"Línea {numero}",
-                f"{item.cantidad} reinas {raza.nombre} ({producto.nombre}) a "
-                f"{item.precio_unitario} {pedido.moneda.value} c/u",
-            )
-        )
-    return armar_propuesta(
-        ctx,
-        AccionPropuesta.CREAR_PEDIDO,
-        "/api/v1/pedidos",
-        volcar_cuerpo(adaptador, pedido),
-        resumen,
-        ROLES_VENTAS,
-    )
-
-
-# --- reservar_pedido ---
-
-
-class EntradaReserva(EntradaPropuesta):
-    pedido_id: UUID = Field(description="Id del pedido en borrador.")
-
-
-def proponer_reserva(ctx: Contexto, entrada: EntradaReserva) -> Resultado:
-    pedido = _pedido(ctx, entrada.pedido_id)
-    if pedido.estado != EstadoPedido.BORRADOR:
-        raise ErrorDeHerramienta(
-            f"El pedido está {pedido.estado.value}: solo se reserva uno en borrador."
-        )
-    pedidas: dict[UUID, int] = {}
-    for linea in pedido.items:
-        pedidas[linea.raza_id] = pedidas.get(linea.raza_id, 0) + linea.cantidad
-    disponibilidad = {
-        d.raza_id: d for d in repositorio_disponibilidad.calcular(ctx.sesion)
-    }
-    resumen = [("Pedido", _etiqueta_pedido(ctx, pedido))]
-    faltan = []
-    for raza_id, cantidad in pedidas.items():
-        fila = disponibilidad.get(raza_id)
-        disponible = 0 if fila is None else fila.disponible
-        nombre = "?" if fila is None else fila.raza
-        if cantidad > disponible:
-            faltan.append(f"{nombre}: pide {cantidad} y hay {disponible} disponibles")
-        resumen.append(
-            (f"Reinas {nombre}", f"{cantidad} (disponibles ahora: {disponible})")
-        )
-    if faltan:
-        raise ErrorDeHerramienta(
-            "No alcanza la disponibilidad para reservar: " + "; ".join(faltan) + "."
-        )
-    return armar_propuesta(
-        ctx,
-        AccionPropuesta.RESERVAR_PEDIDO,
-        f"/api/v1/pedidos/{pedido.id}/reservas",
-        None,
-        resumen,
         ROLES_VENTAS,
     )
 
@@ -471,147 +324,4 @@ def proponer_operacion(ctx: Contexto, entrada: EntradaOperacion) -> Resultado:
         volcar_cuerpo(_OPERACION, operacion),
         resumen + extra,
         ROLES_PRODUCCION,
-    )
-
-
-# --- pedir_borrador ---
-
-
-class EntradaBorrador(EntradaPropuesta):
-    pedido_id: UUID = Field(description="Id del pedido.")
-    corrige_a: UUID | None = Field(
-        default=None,
-        description="Solo para corregir: id del borrador APROBADO del mismo "
-        "pedido (sale de ver_pedido). El aprobado no cambia.",
-    )
-
-
-def _corregido(ctx: Contexto, pedido_id: UUID, borrador_id: UUID) -> None:
-    """Lo mismo que valida el endpoint (generacion._validar_correccion),
-    antes de proponer: asi el modelo corrige sin que el usuario confirme algo
-    que va a fallar."""
-    try:
-        corregido = generacion.obtener(ctx.sesion, borrador_id)
-    except ErrorDeApi:
-        corregido = None
-    if (
-        corregido is None
-        or corregido.pedido_id != pedido_id
-        or corregido.estado != EstadoBorrador.APROBADO
-    ):
-        raise ErrorDeHerramienta(
-            "Solo se corrige un borrador aprobado del mismo pedido."
-        )
-
-
-def proponer_borrador(ctx: Contexto, entrada: EntradaBorrador) -> Resultado:
-    pedido = _pedido(ctx, entrada.pedido_id)
-    if entrada.corrige_a is not None:
-        _corregido(ctx, pedido.id, entrada.corrige_a)
-    adaptador = TypeAdapter(BorradorPedido)
-    cuerpo = volcar_cuerpo(
-        adaptador,
-        validar_cuerpo(
-            adaptador, {"pedido_id": pedido.id, "corrige_a": entrada.corrige_a}
-        ),
-    )
-    resumen = [("Pedido", _etiqueta_pedido(ctx, pedido))]
-    if entrada.corrige_a is not None:
-        resumen.append(("Corrige", "El borrador aprobado del pedido (no cambia)"))
-    resumen.append(
-        ("Qué pasa", "La IA redacta un borrador que una persona revisa y aprueba.")
-    )
-    return armar_propuesta(
-        ctx,
-        AccionPropuesta.PEDIR_BORRADOR,
-        "/api/v1/documentos/borradores",
-        cuerpo,
-        resumen,
-        ROLES_VENTAS,
-    )
-
-
-# --- cancelar_pedido ---
-
-_CAMBIO_DE_ESTADO: TypeAdapter[Any] = TypeAdapter(CambioDeEstado)
-CANCELABLES = (EstadoPedido.BORRADOR, EstadoPedido.RESERVADO)
-# Pedidos de un cliente que se miran para resolver "el pedido de X".
-PAGINA_PEDIDOS = ParametrosDePagina(limite=50, cursor=None)
-
-
-class EntradaCancelacion(EntradaPropuesta):
-    pedido_id: UUID | None = Field(
-        default=None, description="Id del pedido (sale de buscar_pedidos)."
-    )
-    cliente: str | None = Field(
-        default=None,
-        description="Nombre del cliente, si el usuario no dio el pedido: sirve "
-        "cuando tiene un solo pedido en borrador o reservado.",
-    )
-
-
-def _pedido_a_cancelar(ctx: Contexto, entrada: EntradaCancelacion) -> PedidoRespuesta:
-    """El pedido por id o, si el cliente tiene uno solo cancelable, ese."""
-    if entrada.pedido_id is not None:
-        return _pedido(ctx, entrada.pedido_id)
-    exigir({"el pedido (o el cliente del pedido)": entrada.cliente})
-    assert entrada.cliente is not None
-    cliente = resolucion.cliente(ctx.sesion, entrada.cliente, incluir_inactivos=True)
-    pagina = repositorio_pedidos.listar(
-        ctx.sesion, PAGINA_PEDIDOS, cliente_id=cliente.id
-    )
-    cancelables = [p for p in pagina.items if p.estado in CANCELABLES]
-    if len(cancelables) == 1:
-        return cancelables[0]
-    if not cancelables:
-        raise ErrorDeHerramienta(
-            f"{cliente.nombre} no tiene pedidos en borrador ni reservados: no "
-            "hay nada que cancelar."
-        )
-    opciones = "; ".join(
-        f"id {p.id} ({p.estado.value}, entrega "
-        f"{p.fecha_entrega_solicitada.isoformat()})"
-        for p in cancelables[: resolucion.MAX_OPCIONES_EN_ERROR]
-    )
-    raise ErrorDeHerramienta(
-        f"{cliente.nombre} tiene {len(cancelables)} pedidos que se pueden "
-        f"cancelar: {opciones}. Preguntale al usuario cuál."
-    )
-
-
-def proponer_cancelacion(ctx: Contexto, entrada: EntradaCancelacion) -> Resultado:
-    pedido = _pedido_a_cancelar(ctx, entrada)
-    # La misma regla que aplica el repositorio al cambiar el estado (#36).
-    if not puede_pasar(pedido.estado, EstadoPedido.CANCELADO):
-        raise ErrorDeHerramienta(
-            f"El pedido está {pedido.estado.value}: solo se cancela uno en "
-            "borrador o reservado."
-        )
-    cuerpo = volcar_cuerpo(
-        _CAMBIO_DE_ESTADO,
-        validar_cuerpo(_CAMBIO_DE_ESTADO, {"estado": EstadoPedido.CANCELADO}),
-    )
-    reinas = sum(linea.cantidad for linea in pedido.items)
-    resumen = [
-        ("Pedido", _etiqueta_pedido(ctx, pedido)),
-        ("Estado actual", pedido.estado.value),
-        ("Reinas del pedido", str(reinas)),
-    ]
-    if pedido.estado == EstadoPedido.RESERVADO:
-        resumen.append(
-            ("Reservas", "Se liberan: esas reinas vuelven a estar disponibles.")
-        )
-    resumen.append(
-        (
-            "Atención",
-            "Cancelar es final: el pedido no se puede reactivar ni editar después.",
-        )
-    )
-    return armar_propuesta(
-        ctx,
-        AccionPropuesta.CANCELAR_PEDIDO,
-        f"/api/v1/pedidos/{pedido.id}/estado",
-        cuerpo,
-        resumen,
-        ROLES_VENTAS,
     )

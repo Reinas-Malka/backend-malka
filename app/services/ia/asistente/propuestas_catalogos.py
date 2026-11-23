@@ -12,6 +12,7 @@ pregunta, en lugar de proponer algo que va a fallar al confirmar.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Any, Literal
@@ -20,7 +21,7 @@ from uuid import UUID
 from pydantic import Field, TypeAdapter
 
 from app.errores import ErrorDeApi
-from app.schemas.asistente import AccionPropuesta
+from app.schemas.asistente import AccionPropuesta, Propuesta
 from app.schemas.produccion import (
     CAPACIDAD_BANCO_POR_DEFECTO,
     BancoCrear,
@@ -29,10 +30,9 @@ from app.schemas.produccion import (
     MovimientoCrear,
     NucleosLoteCrear,
     ParqueCrear,
-    ParqueRespuesta,
     RazaCrear,
 )
-from app.services.ia.asistente import resolucion
+from app.services.ia.asistente import plan, resolucion
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.propuestas import (
     ROLES_PRODUCCION,
@@ -51,9 +51,17 @@ from app.services.produccion import (
 from app.services.produccion.bancos import PATRON_SERIE, identificador_siguiente
 
 
-def _sin_repetir(nombre: str, existentes: list[Opcion], que: str, donde: str) -> None:
+def _sin_repetir(
+    ctx: Contexto,
+    nombre: str,
+    existentes: list[Opcion],
+    accion: AccionPropuesta,
+    que: str,
+    donde: str,
+) -> None:
     """El nombre no puede estar en el catalogo, ni siquiera dado de baja (el
-    UNIQUE del criadero lo rechazaria con un 409 al confirmar)."""
+    UNIQUE del criadero lo rechazaria con un 409 al confirmar), ni en otra
+    propuesta del mismo turno."""
     repetido = resolucion.coincidencia_exacta(nombre, existentes)
     if repetido is not None:
         raise ErrorDeHerramienta(
@@ -61,6 +69,12 @@ def _sin_repetir(nombre: str, existentes: list[Opcion], que: str, donde: str) ->
             f"dado de baja: se reactiva desde la pantalla de {donde}). No se "
             "puede crear otro con el mismo nombre."
         )
+    buscado = resolucion.normalizar(nombre)
+    for _, otro in plan.pendientes_de(ctx.pendientes, accion):
+        if resolucion.normalizar(otro) == buscado:
+            raise ErrorDeHerramienta(
+                f'Ya propusiste {que} "{otro}" en este turno: no lo repitas.'
+            )
 
 
 # --- crear_parque ---
@@ -89,8 +103,10 @@ def proponer_parque(ctx: Contexto, entrada: EntradaParque) -> Resultado:
         adaptador, entrada.model_dump(mode="json", exclude_none=True)
     )
     _sin_repetir(
+        ctx,
         parque.nombre,
         resolucion.parques(ctx.sesion, incluir_inactivos=True),
+        AccionPropuesta.CREAR_PARQUE,
         "un parque",
         "Parques",
     )
@@ -127,33 +143,28 @@ def _como_uuid(texto: str) -> UUID | None:
         return None
 
 
-def _parque_por_nombre(ctx: Contexto, nombre: str) -> Opcion:
-    """El parque activo con ese nombre. Si no hay ninguno, el modelo tiene
-    que proponer primero el parque (y esperar a que se confirme)."""
-    activos = resolucion.parques(ctx.sesion)
-    buscado = resolucion.normalizar(nombre)
-    if buscado and not any(buscado in resolucion.normalizar(o.nombre) for o in activos):
-        todos = resolucion.parques(ctx.sesion, incluir_inactivos=True)
-        de_baja = resolucion.coincidencia_exacta(nombre, todos)
-        if de_baja is not None:
-            raise ErrorDeHerramienta(
-                f'El parque "{de_baja.nombre}" está dado de baja: no admite '
-                "núcleos. Se reactiva desde la pantalla de Parques."
-            )
-        raise ErrorDeHerramienta(
-            f'El parque "{nombre}" todavía no existe en el criadero. Si el '
-            "usuario lo quiere crear, primero proponé el parque con "
-            "proponer_parque; los núcleos se proponen cuando llegue el "
-            "resultado confirmado de esa propuesta."
-        )
-    # Exacta, o una sola parcial; si es ambiguo, el error trae las opciones.
-    return resolucion.resolver(nombre, activos, "el parque")
+@dataclass(frozen=True)
+class _Destino:
+    """El parque de los nucleos: uno de la base o uno propuesto en el turno
+    (entonces la ruta lleva el marcador del id que va a tener)."""
+
+    id_en_ruta: str
+    nombre: str
+    capacidad_max: int
+    nucleos_activos: int
 
 
-def _parque(ctx: Contexto, nombre_o_id: str) -> ParqueRespuesta:
-    parque_id = _como_uuid(nombre_o_id)
-    if parque_id is None:
-        parque_id = _parque_por_nombre(ctx, nombre_o_id).id
+def _de_la_propuesta(propuesta: Propuesta) -> _Destino:
+    cuerpo = propuesta.cuerpo or {}
+    return _Destino(
+        plan.marcador(propuesta.id),
+        str(cuerpo.get("nombre", "?")),
+        int(cuerpo.get("capacidad_max", 0)),
+        0,
+    )
+
+
+def _de_la_base(ctx: Contexto, parque_id: UUID) -> _Destino:
     try:
         parque = repositorio_parques.obtener(ctx.sesion, parque_id)
     except ErrorDeApi as error:
@@ -162,7 +173,45 @@ def _parque(ctx: Contexto, nombre_o_id: str) -> ParqueRespuesta:
         raise ErrorDeHerramienta(
             f'El parque "{parque.nombre}" está dado de baja: no admite núcleos.'
         )
-    return parque
+    return _Destino(
+        str(parque.id), parque.nombre, parque.capacidad_max, parque.nucleos_activos
+    )
+
+
+def _parque(ctx: Contexto, texto: str) -> _Destino:
+    """Por id (de la base o de una propuesta del turno) o por nombre:
+    primero la base, despues lo propuesto en el turno. Si no esta en
+    ninguno, el modelo tiene que proponer primero el parque."""
+    parque_id = _como_uuid(texto)
+    if parque_id is not None:
+        propuesta = plan.pendiente(
+            ctx.pendientes, parque_id, AccionPropuesta.CREAR_PARQUE
+        )
+        if propuesta is not None:
+            return _de_la_propuesta(propuesta)
+        return _de_la_base(ctx, parque_id)
+    activos = resolucion.parques(ctx.sesion)
+    pendientes = plan.pendientes_de(ctx.pendientes, AccionPropuesta.CREAR_PARQUE)
+    buscado = resolucion.normalizar(texto)
+    nombres = [o.nombre for o in activos] + [nombre for _, nombre in pendientes]
+    if buscado and not any(buscado in resolucion.normalizar(n) for n in nombres):
+        todos = resolucion.parques(ctx.sesion, incluir_inactivos=True)
+        de_baja = resolucion.coincidencia_exacta(texto, todos)
+        if de_baja is not None:
+            raise ErrorDeHerramienta(
+                f'El parque "{de_baja.nombre}" está dado de baja: no admite '
+                "núcleos. Se reactiva desde la pantalla de Parques."
+            )
+        raise ErrorDeHerramienta(
+            f'El parque "{texto}" todavía no existe en el criadero. Si el '
+            "usuario lo quiere crear, proponé primero el parque con "
+            "proponer_parque (en este mismo turno) y después los núcleos: "
+            "quedan como un plan, con los núcleos dependiendo del parque."
+        )
+    elegido = plan.resolver(texto, activos, pendientes, "el parque")
+    if elegido.pendiente is not None:
+        return _de_la_propuesta(elegido.pendiente)
+    return _de_la_base(ctx, UUID(elegido.id))
 
 
 def proponer_nucleos(ctx: Contexto, entrada: EntradaNucleos) -> Resultado:
@@ -181,7 +230,7 @@ def proponer_nucleos(ctx: Contexto, entrada: EntradaNucleos) -> Resultado:
     return armar_propuesta(
         ctx,
         AccionPropuesta.CREAR_NUCLEOS,
-        f"/api/v1/parques/{parque.id}/nucleos",
+        f"/api/v1/parques/{parque.id_en_ruta}/nucleos",
         volcar_cuerpo(adaptador, lote),
         [
             ("Parque", parque.nombre),
@@ -241,8 +290,10 @@ def proponer_raza(ctx: Contexto, entrada: EntradaRaza) -> Resultado:
     adaptador = TypeAdapter(RazaCrear)
     raza = validar_cuerpo(adaptador, entrada.model_dump(mode="json", exclude_none=True))
     _sin_repetir(
+        ctx,
         raza.nombre,
         resolucion.razas(ctx.sesion, incluir_inactivas=True),
+        AccionPropuesta.CREAR_RAZA,
         "una raza",
         "Razas",
     )
@@ -284,8 +335,10 @@ def proponer_producto(ctx: Contexto, entrada: EntradaProducto) -> Resultado:
         adaptador, entrada.model_dump(mode="json", exclude_none=True)
     )
     _sin_repetir(
+        ctx,
         producto.nombre,
         resolucion.productos(ctx.sesion, incluir_inactivos=True),
+        AccionPropuesta.CREAR_PRODUCTO,
         "un producto",
         "Productos",
     )
@@ -325,8 +378,10 @@ def proponer_material(ctx: Contexto, entrada: EntradaMaterial) -> Resultado:
         adaptador, entrada.model_dump(mode="json", exclude_none=True)
     )
     _sin_repetir(
+        ctx,
         material.nombre,
         resolucion.materiales(ctx.sesion, incluir_inactivos=True),
+        AccionPropuesta.CREAR_MATERIAL,
         "un material",
         "Materiales",
     )
@@ -366,22 +421,35 @@ class EntradaMovimiento(EntradaPropuesta):
     )
 
 
-def proponer_movimiento(ctx: Contexto, entrada: EntradaMovimiento) -> Resultado:
-    elegido = resolucion.resolver(
-        entrada.material, resolucion.materiales(ctx.sesion), "el material"
+def _material(ctx: Contexto, texto: str) -> tuple[str, str, str, Decimal]:
+    """Id en la ruta, nombre, unidad y stock: de la base o de un material
+    propuesto en el turno (que arranca en 0)."""
+    elegido = plan.resolver(
+        texto,
+        resolucion.materiales(ctx.sesion),
+        plan.pendientes_de(ctx.pendientes, AccionPropuesta.CREAR_MATERIAL),
+        "el material",
     )
+    if elegido.pendiente is not None:
+        cuerpo = elegido.pendiente.cuerpo or {}
+        return elegido.id, elegido.nombre, str(cuerpo.get("unidad", "")), Decimal(0)
+    material = repositorio_materiales.obtener(ctx.sesion, UUID(elegido.id))
+    return str(material.id), material.nombre, material.unidad, material.stock
+
+
+def proponer_movimiento(ctx: Contexto, entrada: EntradaMovimiento) -> Resultado:
+    id_en_ruta, nombre, unidad, stock = _material(ctx, entrada.material)
     exigir({"tipo (compra o ajuste)": entrada.tipo, "cantidad": entrada.cantidad})
     adaptador = TypeAdapter(MovimientoCrear)
     cuerpo: dict[str, Any] = entrada.model_dump(
         mode="json", exclude={"material"}, exclude_none=True
     )
     movimiento = validar_cuerpo(adaptador, cuerpo)
-    material = repositorio_materiales.obtener(ctx.sesion, elegido.id)
-    queda = material.stock + movimiento.cantidad
+    queda = stock + movimiento.cantidad
     resumen = [
-        ("Material", material.nombre),
+        ("Material", nombre),
         ("Tipo", movimiento.tipo),
-        ("Cantidad", f"{movimiento.cantidad:+f} {material.unidad}"),
+        ("Cantidad", f"{movimiento.cantidad:+f} {unidad}"),
         (
             "Fecha",
             movimiento.fecha.isoformat() if movimiento.fecha else "hoy",
@@ -392,14 +460,14 @@ def proponer_movimiento(ctx: Contexto, entrada: EntradaMovimiento) -> Resultado:
     resumen.append(
         (
             "Stock",
-            f"{material.stock:f} → {queda:f} {material.unidad}"
+            f"{stock:f} → {queda:f} {unidad}"
             + (" (queda negativo: se permite, con aviso)" if queda < 0 else ""),
         )
     )
     return armar_propuesta(
         ctx,
         AccionPropuesta.REGISTRAR_MOVIMIENTO_MATERIAL,
-        f"/api/v1/materiales/{material.id}/movimientos",
+        f"/api/v1/materiales/{id_en_ruta}/movimientos",
         volcar_cuerpo(adaptador, movimiento),
         resumen,
         ROLES_PRODUCCION,

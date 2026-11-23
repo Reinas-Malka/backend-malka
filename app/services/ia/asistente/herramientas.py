@@ -19,11 +19,13 @@ from sqlalchemy import text
 
 from app.db import sesion_de_tenant
 from app.errores import ErrorDeApi
+from app.schemas.asistente import Propuesta
 from app.services.ia.asistente import (
     lectura,
     lectura_borradores,
     propuestas,
     propuestas_catalogos,
+    propuestas_pedidos,
 )
 from app.services.ia.asistente.base import Contexto, Resultado
 from app.services.ia.asistente.resolucion import ErrorDeHerramienta
@@ -130,17 +132,18 @@ CATALOGO: tuple[Herramienta, ...] = (
     Herramienta(
         "proponer_pedido",
         "Arma la propuesta de un pedido de reinas (queda en borrador). Acepta "
-        "nombres de cliente, producto y raza. No lo crea: el usuario confirma.",
-        propuestas.EntradaPedido,
-        propuestas.proponer_pedido,
+        "nombres de cliente, producto y raza, también los propuestos en este "
+        "turno. No lo crea: el usuario confirma.",
+        propuestas_pedidos.EntradaPedido,
+        propuestas_pedidos.proponer_pedido,
         escritura=True,
     ),
     Herramienta(
         "proponer_reserva",
         "Arma la propuesta de reservar las reinas de un pedido en borrador. No "
         "reserva: el usuario confirma.",
-        propuestas.EntradaReserva,
-        propuestas.proponer_reserva,
+        propuestas_pedidos.EntradaReserva,
+        propuestas_pedidos.proponer_reserva,
         escritura=True,
     ),
     Herramienta(
@@ -164,8 +167,8 @@ CATALOGO: tuple[Herramienta, ...] = (
         "proponer_borrador",
         "Arma la propuesta de pedirle a la IA el borrador del documento de un "
         "pedido. No lo pide: el usuario confirma.",
-        propuestas.EntradaBorrador,
-        propuestas.proponer_borrador,
+        propuestas_pedidos.EntradaBorrador,
+        propuestas_pedidos.proponer_borrador,
         escritura=True,
     ),
     Herramienta(
@@ -174,8 +177,8 @@ CATALOGO: tuple[Herramienta, ...] = (
         "sus reservas). Cancelar es final. Acepta el id del pedido o el nombre "
         "del cliente si tiene uno solo cancelable. No lo cancela: el usuario "
         "confirma.",
-        propuestas.EntradaCancelacion,
-        propuestas.proponer_cancelacion,
+        propuestas_pedidos.EntradaCancelacion,
+        propuestas_pedidos.proponer_cancelacion,
         escritura=True,
     ),
     Herramienta(
@@ -282,7 +285,12 @@ def _entrada(herramienta: Herramienta, datos: Any) -> BaseModel:
 
 
 def ejecutar(
-    nombre: str, datos: Any, *, tenant_id: UUID, grupos: frozenset[str]
+    nombre: str,
+    datos: Any,
+    *,
+    tenant_id: UUID,
+    grupos: frozenset[str],
+    pendientes: tuple[Propuesta, ...] = (),
 ) -> tuple[Herramienta, Resultado]:
     """Corre una herramienta, o ErrorDeHerramienta para devolverle al modelo.
 
@@ -297,7 +305,9 @@ def ejecutar(
     try:
         with sesion_de_tenant(tenant_id) as sesion:
             sesion.execute(SOLO_LECTURA)
-            resultado = herramienta.ejecutar(Contexto(sesion, grupos), entrada)
+            resultado = herramienta.ejecutar(
+                Contexto(sesion, grupos, pendientes), entrada
+            )
     except ErrorDeApi as error:
         raise ErrorDeHerramienta(error.message) from None
     return herramienta, resultado

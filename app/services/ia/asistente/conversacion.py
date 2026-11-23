@@ -264,6 +264,8 @@ def _usar(uso: dict[str, Any], identidad: Identidad, estado: _Estado) -> dict[st
             uso.get("input", {}),
             tenant_id=identidad.tenant_id,
             grupos=identidad.grupos,
+            # Las del turno: un paso puede depender de otro todavia no creado.
+            pendientes=tuple(estado.propuestas),
         )
     except ErrorDeHerramienta as error:
         return _resultado(tool_use_id, {"error": str(error)}, error=True)

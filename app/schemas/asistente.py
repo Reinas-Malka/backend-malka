@@ -106,6 +106,11 @@ class Propuesta(BaseModel):
       resueltos, nunca texto del modelo.
     - roles_permitidos: los del endpoint, para deshabilitar el boton si el
       usuario no puede confirmarla.
+    - paso: orden de ejecucion dentro de la respuesta (1..n).
+    - depende_de: propuestas de la misma respuesta que tienen que
+      ejecutarse antes. La ruta o el cuerpo llevan un marcador
+      {{ref:<id de esa propuesta>.id}} donde va el id del recurso que crea:
+      el front lo reemplaza con el id de la respuesta de ese paso.
     """
 
     id: UUID
@@ -115,6 +120,8 @@ class Propuesta(BaseModel):
     cuerpo: dict[str, Any] | None
     resumen: list[ParResumen]
     roles_permitidos: list[str]
+    paso: int = Field(default=1, ge=1)
+    depende_de: list[UUID] = []
 
 
 class RespuestaAsistente(BaseModel):
