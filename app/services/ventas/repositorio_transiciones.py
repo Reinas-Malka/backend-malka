@@ -33,6 +33,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import metricas
 from app.errores import ConflictoError, NoEncontradoError, ValidacionError
 from app.fechas import hoy
 from app.schemas.pedidos import PedidoRespuesta
@@ -106,6 +107,7 @@ def cambiar_estado(
     if estado is None:
         raise NoEncontradoError("No existe el pedido.", code="pedido_no_encontrado")
     if not puede_pasar(estado, datos.estado):
+        metricas.contar(metricas.TRANSICIONES_INVALIDAS, entidad="pedido")
         raise ConflictoError(
             f"Un pedido {estado} no puede pasar a {datos.estado.value}.",
             code="transicion_invalida",

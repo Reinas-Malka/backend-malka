@@ -27,16 +27,14 @@ cae al valor por defecto.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import sys
-import time
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import metricas
 from app.errores import LimiteExcedidoError
 from app.services.ia.cliente import MAX_TOKENS_SALIDA, RespuestaIA
 
@@ -160,30 +158,16 @@ def registrar_consumo(
 
 
 def _emitir_metrica(tenant_id: UUID, respuesta: RespuestaIA) -> None:
-    """Embedded Metric Format: una linea JSON en stdout que CloudWatch Logs
-    convierte en metricas, sin llamar a la API de CloudWatch (#44).
+    """Llamadas y tokens por criadero en EMF (app/metricas.py, #44).
 
-    Por criadero: el tenant es la unica dimension (pocos valores).
+    El tenant es la unica dimension (pocos valores).
     """
-    linea = {
-        "_aws": {
-            "Timestamp": int(time.time() * 1000),
-            "CloudWatchMetrics": [
-                {
-                    "Namespace": "MalkaSuite/IA",
-                    "Dimensions": [["tenant_id"]],
-                    "Metrics": [
-                        {"Name": "Llamadas", "Unit": "Count"},
-                        {"Name": "TokensEntrada", "Unit": "Count"},
-                        {"Name": "TokensSalida", "Unit": "Count"},
-                    ],
-                }
-            ],
+    metricas.emitir(
+        {
+            "Llamadas": (1, "Count"),
+            "TokensEntrada": (respuesta.tokens_entrada, "Count"),
+            "TokensSalida": (respuesta.tokens_salida, "Count"),
         },
-        "tenant_id": str(tenant_id),
-        "Llamadas": 1,
-        "TokensEntrada": respuesta.tokens_entrada,
-        "TokensSalida": respuesta.tokens_salida,
-    }
-    sys.stdout.write(json.dumps(linea) + "\n")
-    sys.stdout.flush()
+        namespace="MalkaSuite/IA",
+        dimensiones={"tenant_id": str(tenant_id)},
+    )

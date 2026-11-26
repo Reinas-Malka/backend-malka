@@ -16,7 +16,7 @@ from enum import StrEnum
 
 from sqlalchemy import text
 
-from app import db
+from app import db, metricas
 
 # Tope de la consulta. La conexion tiene el suyo (CONNECT_TIMEOUT_S en db.py).
 TIMEOUT_CONSULTA_MS = 2000
@@ -43,6 +43,7 @@ def verificar_base_de_datos() -> Estado:
             conexion.execute(FIJAR_TIMEOUT, {"ms": str(TIMEOUT_CONSULTA_MS)})
             conexion.execute(CONSULTA).scalar_one()
     except Exception as error:
+        metricas.si_es_de_conexion(error, "salud")
         # Cualquier falla cuenta: secreto ausente, red, credencial o timeout.
         # Solo el tipo: el mensaje de psycopg incluye el host de RDS.
         logger.warning(

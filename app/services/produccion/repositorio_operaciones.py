@@ -40,6 +40,7 @@ from uuid import UUID
 from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
+from app import metricas
 from app.errores import ConflictoError, NoEncontradoError, ValidacionError
 from app.schemas.produccion import (
     OperacionCosechar,
@@ -210,6 +211,7 @@ def _introducir(
     sesion: Session, tanda: Row[Any], datos: OperacionIntroducir
 ) -> OperacionRealizada:
     if _ya_cosechada(sesion, tanda.id):
+        metricas.contar(metricas.TRANSICIONES_INVALIDAS, entidad="tanda")
         raise ConflictoError(
             "La tanda ya se cosecho: no se le pueden introducir mas celdas.",
             code="transicion_invalida",
@@ -276,6 +278,7 @@ def _cosechar(
         )
     hay = _contar(sesion, CONTAR_EN_ESTADO, tanda.id, estado="introducida")
     if hay == 0:
+        metricas.contar(metricas.TRANSICIONES_INVALIDAS, entidad="tanda")
         raise ConflictoError(
             "La tanda no tiene celdas en el parque: primero hay que introducirlas.",
             code="transicion_invalida",

@@ -212,7 +212,7 @@ resource "aws_lambda_event_source_mapping" "ingesta" {
 # Alarmas de DLQ
 #
 # Cualquier mensaje visible en una DLQ significa que fallo 3 veces y hay que
-# mirarlo. El destino (SNS/email) se engancha con el modulo de metricas.
+# mirarlo. Avisan al topic de SNS de metricas.tf (#44).
 ###############################################################################
 
 resource "aws_cloudwatch_metric_alarm" "dlq_documentos" {
@@ -227,6 +227,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_documentos" {
   threshold           = 0
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarmas.arn]
 
   tags = {
     Name = "${local.name}-dlq-documentos-con-mensajes"
@@ -245,6 +246,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_ingesta" {
   threshold           = 0
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarmas.arn]
 
   tags = {
     Name = "${local.name}-dlq-ingesta-con-mensajes"

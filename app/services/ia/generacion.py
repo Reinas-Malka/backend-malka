@@ -29,6 +29,8 @@ from pydantic import BaseModel
 from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
+from app import contexto
+from app import metricas as emf
 from app.db import sesion_de_tenant
 from app.errores import NoEncontradoError, ValidacionError
 from app.paginacion import Pagina, ParametrosDePagina, armar_pagina, valores_del_cursor
@@ -230,11 +232,32 @@ def pedir(
     return obtener(sesion, borrador_id)
 
 
-def encolar(cola: Cola, tenant_id: UUID, borrador_id: UUID) -> None:
+def encolar(
+    cola: Cola, tenant_id: UUID, borrador_id: UUID, request_id: str | None = None
+) -> None:
     """Corre despues del commit (background task). Si la cola falla, el
-    borrador queda rechazado en lugar de en generando para siempre."""
+    borrador queda rechazado en lugar de en generando para siempre.
+
+    El mensaje lleva el request_id del pedido (#44): el worker lo retoma y
+    la operacion se sigue por el mismo id desde la API hasta el modelo.
+    """
+    rid = request_id or contexto.request_id_actual()
+    marca = contexto.request_id.set(rid)
     try:
-        cola.enviar({"borrador_id": str(borrador_id), "tenant_id": str(tenant_id)})
+        _encolar(cola, tenant_id, borrador_id, rid)
+    finally:
+        contexto.request_id.reset(marca)
+
+
+def _encolar(cola: Cola, tenant_id: UUID, borrador_id: UUID, rid: str) -> None:
+    try:
+        cola.enviar(
+            {
+                "borrador_id": str(borrador_id),
+                "tenant_id": str(tenant_id),
+                "request_id": rid,
+            }
+        )
     except Exception:
         logger.exception("no se pudo encolar el borrador id=%s", borrador_id)
         with sesion_de_tenant(tenant_id) as sesion:
@@ -384,3 +407,10 @@ def procesar(mensaje: dict[str, Any], modelo: ClienteIA) -> None:
                     latencia_ms=resultado.metricas.latencia_ms,
                 ),
             )
+
+    # Despues del commit: un borrador que no se guardo no cuenta (#44).
+    emf.contar(
+        emf.DOCUMENTOS_GENERADOS
+        if resultado.estado == "borrador"
+        else emf.DOCUMENTOS_RECHAZADOS_POR_VALIDACION
+    )
