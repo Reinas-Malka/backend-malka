@@ -438,8 +438,10 @@ infra/
 ├── outputs.tf           # Valores que se consultan después del apply
 └── backend.hcl.example  # Plantilla del backend de estado
 docs/
-├── adr/                 # Decisiones de arquitectura
+├── dominio.md           # Reglas del negocio: ganan ante código o ADRs
+├── adr/                 # Decisiones de arquitectura (estructura del repo: ADR 0016)
 └── diagramas/           # Arquitectura y pipeline (regenerables con Python)
+AGENTS.md                # Reglas para agentes y personas que trabajan el repo
 tests/                   # Pruebas automatizadas
 migraciones/             # Migraciones de Alembic (versions/ tiene una por cambio)
 alembic.ini              # Configuración de Alembic
