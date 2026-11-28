@@ -4,6 +4,8 @@ Backend de Malka Suite (TP Cloud, UTN FRLP). FastAPI + Lambda + Terraform.
 **El negocio está en [`docs/dominio.md`](docs/dominio.md)**: leelo antes de
 tocar modelos, migraciones o cálculos. Si ese documento contradice código o
 ADRs, gana el documento y el conflicto se reporta como issue.
+La estructura del repo (`app/` e `infra/` en la raíz, sin carpeta
+`backend/`) está en el [ADR 0016](docs/adr/0016-estructura-del-repositorio.md).
 
 ## Reglas duras
 
