@@ -42,13 +42,19 @@ variable "presupuesto_mensual_usd" {
 }
 
 variable "email_alertas" {
-  description = "Email que recibe las alertas de presupuesto y (a futuro) de las alarmas de DLQ. Obligatoria: sin ella terraform plan falla en vez de proponer destruir el presupuesto"
+  description = "Email que recibe las alertas de presupuesto y las alarmas de CloudWatch (metricas.tf, #44). Obligatoria: sin ella terraform plan falla en vez de proponer destruir el presupuesto"
   type        = string
 
   validation {
     condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.email_alertas))
     error_message = "email_alertas tiene que ser una direccion de email valida (se carga con TF_VAR_email_alertas)."
   }
+}
+
+variable "latencia_p95_maxima_ms" {
+  description = "Umbral de la alarma de p95 de latencia de la API. El asistente conversacional tarda hasta ~22 s, pero es una fraccion del trafico: el p95 normal queda muy por debajo"
+  type        = number
+  default     = 5000
 }
 
 variable "image_tag" {

@@ -30,6 +30,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from app import metricas
 from app.auth import Identidad
 from app.db import sesion_de_tenant
 from app.errores import ErrorDeApi, ValidacionError
@@ -224,6 +225,7 @@ def _llamar(
         )
         raise _no_disponible() from None
     latencia_ms = round((reloj() - comienzo) * 1000)
+    metricas.llamada_bedrock("asistente", latencia_ms, tokens_entrada + tokens_salida)
 
     estado.llamadas += 1
     estado.tokens_entrada += tokens_entrada

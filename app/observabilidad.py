@@ -29,7 +29,7 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import RequestResponseEndpoint
 
-from app import contexto
+from app import contexto, metricas
 from app.errores import respuesta_de_error
 
 HEADER_REQUEST_ID = "x-request-id"
@@ -129,10 +129,12 @@ def instalar_observabilidad(app: FastAPI) -> None:
         try:
             try:
                 response = await call_next(request)
-            except Exception:
+            except Exception as error:
                 # Error inesperado: se registra con su traza, pero al cliente
                 # solo le llega la forma unica, sin detalles internos.
                 logger.exception("error no manejado")
+                # Una base caida o inalcanzable alimenta su alarma (#44).
+                metricas.si_es_de_conexion(error, "api")
                 response = respuesta_de_error(
                     500, "error_interno", "Ocurrio un error inesperado."
                 )

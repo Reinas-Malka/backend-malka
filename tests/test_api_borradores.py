@@ -198,16 +198,18 @@ def test_pedir_un_borrador_lo_deja_generando_y_lo_encola(
 ) -> None:
     datos, _ = criaderos
 
-    borrador = pedir(api, datos)
+    borrador = pedir(api, datos, **{"x-request-id": "req-borrador"})
 
     assert borrador["estado"] == "generando"
     assert borrador["pedido_id"] == str(datos.pedido)
     assert borrador["contenido"] is None
-    # El mensaje lleva ids, nunca datos del cliente.
+    # El mensaje lleva ids, nunca datos del cliente. El request_id es el del
+    # pedido: el worker lo retoma para seguir la operacion (#44).
     [mensaje] = cola.mensajes
     assert mensaje == {
         "borrador_id": borrador["id"],
         "tenant_id": str(datos.tenant),
+        "request_id": "req-borrador",
     }
 
 

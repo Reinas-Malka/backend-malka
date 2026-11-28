@@ -14,6 +14,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
+from app import metricas
+
 REGION = "us-east-1"
 
 # Modelo verificado en el #39 (inference profile de us-east-1).
@@ -74,9 +76,15 @@ def pedir_al_modelo(
 
     uso = respuesta.get("usage", {})
     texto = respuesta["output"]["message"]["content"][0]["text"]
-    return RespuestaIA(
+    resultado = RespuestaIA(
         texto=str(texto),
         tokens_entrada=int(uso.get("inputTokens", 0)),
         tokens_salida=int(uso.get("outputTokens", 0)),
         latencia_ms=latencia_ms,
     )
+    metricas.llamada_bedrock(
+        "borrador",
+        latencia_ms,
+        resultado.tokens_entrada + resultado.tokens_salida,
+    )
+    return resultado

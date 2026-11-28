@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.auth import Identidad, require_role
+from app.contexto import request_id_actual
 from app.db import obtener_sesion
 from app.idempotencia import PedidoIdempotente, pedido_idempotente, responder_una_vez
 from app.paginacion import Pagina, ParametrosDePagina, parametros_de_pagina
@@ -64,7 +65,13 @@ def pedir_borrador(
         )
         # Despues del commit: el worker tiene que encontrar el borrador. Solo
         # la primera vez; un reintento con la misma clave no vuelve a encolar.
-        tareas.add_task(generacion.encolar, cola, identidad.tenant_id, borrador.id)
+        tareas.add_task(
+            generacion.encolar,
+            cola,
+            identidad.tenant_id,
+            borrador.id,
+            request_id_actual(),
+        )
         return borrador
 
     return responder_una_vez(sesion, pedido, crear, status_code=202)

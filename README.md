@@ -107,6 +107,10 @@ El costo fijo son los **VPC endpoints de interface, que se cobran por AZ: ~0,01 
 | Prueba de vida | `GET /health` | Liveness; el smoke test del deploy usa `/health/ready` |
 | Límite de tráfico | API Gateway | 20 requests por segundo, ráfagas de hasta 50 |
 | Log de acceso | CloudWatch, una línea JSON por request | `request_id`, `tenant_id`, `user_id`, `method`, `route`, `status`, `latency_ms` (ver [Errores y request_id](#errores-y-request_id)) |
+| Métricas de negocio | CloudWatch, namespace `MalkaSuite` (EMF, `app/metricas.py`) | `documentos_generados`, `documentos_rechazados_por_validacion`, `reservas_rechazadas_por_stock`, `bedrock_latency_ms`, `bedrock_tokens`, `transiciones_invalidas`, `errores_conexion_rds`. Cada línea lleva el `request_id` |
+| Alarmas | CloudWatch → SNS → `email_alertas` (`infra/metricas.tf`) | 5xx sobre el 1% en 5 min, p95 de latencia, errores de conexión a RDS y mensajes en las DLQ |
+| Dashboard | CloudWatch `malka-suite-dev-documentos` | Flujo de documentos, Bedrock, rechazos de negocio y salud |
+| Seguir una operación | Logs Insights, consulta `malka-suite-dev/seguir-request-id` | El `request_id` viaja en el mensaje de SQS: la misma consulta trae la línea de acceso de la API, los logs del worker y las métricas |
 
 ---
 
@@ -417,6 +421,7 @@ app/
 ├── errores.py           # Excepciones de dominio y forma única de errores
 ├── paginacion.py        # Paginación por cursor de los listados
 ├── observabilidad.py    # request_id, middleware y logs JSON
+├── metricas.py          # Métricas de negocio en Embedded Metric Format
 ├── contexto.py          # request_id del request en curso (contextvars)
 ├── worker.py            # Handler que consume las colas SQS
 ├── routers/             # Endpoints por módulo: permisos y conexión con el repositorio
@@ -433,6 +438,7 @@ infra/
 ├── compute.tf           # Lambda de API, rol IAM y grupo de logs
 ├── api.tf               # API Gateway: rutas, CORS y límites de tráfico
 ├── sqs.tf               # Colas con DLQ, Lambda worker y alarmas de DLQ
+├── metricas.tf          # Alarmas, topic de SNS, dashboard y consulta por request_id
 ├── s3_documentos.tf     # Bucket de documentos con URLs prefirmadas
 ├── oidc.tf              # Proveedor OIDC de GitHub y rol de deploy
 ├── outputs.tf           # Valores que se consultan después del apply

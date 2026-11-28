@@ -25,6 +25,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import metricas
 from app.errores import ConflictoError, NoEncontradoError
 from app.schemas.reservas import ReservaRespuesta
 from app.services.ventas import repositorio_disponibilidad, repositorio_pedidos
@@ -99,6 +100,7 @@ def reservar(sesion: Session, pedido_id: UUID) -> list[ReservaRespuesta]:
     disponibles = {raza_id: _disponible(sesion, raza_id) for raza_id in pedidas}
     faltan = faltantes(pedidas, disponibles)
     if faltan:
+        metricas.contar(metricas.RESERVAS_RECHAZADAS_POR_STOCK)
         raise ConflictoError(
             "No hay reinas suficientes para reservar el pedido.",
             code="stock_insuficiente",

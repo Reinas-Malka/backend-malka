@@ -25,6 +25,7 @@ from uuid import UUID
 from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
+from app import metricas
 from app.errores import ConflictoError, ValidacionError
 from app.schemas.borradores import Aprobacion, Descarte, RevisionRespuesta
 from app.services.documentos import almacenamiento
@@ -101,6 +102,7 @@ def _bloquear_en_borrador(
     if fila is None:
         raise generacion.no_encontrado()
     if fila.estado != EstadoBorrador.BORRADOR:
+        metricas.contar(metricas.TRANSICIONES_INVALIDAS, entidad="borrador")
         raise ConflictoError(
             f"Un borrador en estado {fila.estado} no se puede pasar a {hacia}.",
             code="transicion_invalida",
